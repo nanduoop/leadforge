@@ -164,7 +164,7 @@ def _job_view():
     stages = []
     for name in STAGES:
         info = job.state.get("stages", {}).get(name, {})
-        status = info.get("status", "pending")
+        status = job.status_from_events(name)
         artifact = ARTIFACT.get(name, "")
         stages.append({
             "id": name,
@@ -173,15 +173,16 @@ def _job_view():
             "artifact": os.path.relpath(artifact, ROOT) if artifact else None,
             "artifact_exists": os.path.exists(artifact) if artifact else False,
             "stats": {k: v for k, v in info.items()
-                      if k not in ("status", "started_at", "finished_at", "failed_at")},
-            "error": info.get("error"),
+                      if k not in ("status", "started_at", "finished_at", "failed_at")
+                      and status == "completed"},
+            "error": info.get("error") if status == "failed" else None,
         })
     events = job.state.get("events", [])[-12:]
-    running = _pipeline_state["running"]
+    running = _pipeline_state["running"] or any(s["status"] == "running" for s in stages)
     overall = (
         "running" if running else
         "failed" if any(s["status"] == "failed" for s in stages) else
-        "completed" if job.completed("export") else
+        "completed" if job.status_from_events("export") == "completed" else
         "idle"
     )
     return {
@@ -234,6 +235,7 @@ def _run_pipeline(config: PipelineStartRequest):
     try:
         job.state["config"] = config.model_dump()
         job.emit("LEAD_GEN_STARTED", stages=todo, source="ui")
+        job.reset_stages(todo)
         for stage in todo:
             if config.resume and job.completed(stage):
                 continue

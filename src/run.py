@@ -65,9 +65,37 @@ class Job:
         self.state["events"].append({"event": event, "at": now(), **detail})
         self.save()
 
+    def reset_stages(self, names):
+        """Clear stage status so a new run does not inherit stale completions."""
+        for name in names:
+            self.state["stages"][name] = {"status": "pending"}
+
     def start(self, stage):
+        if stage in STAGES:
+            idx = STAGES.index(stage)
+            for downstream in STAGES[idx + 1:]:
+                self.state["stages"][downstream] = {"status": "pending"}
         self.state["stages"][stage] = {"status": "running", "started_at": now()}
         self.emit(f"{stage.upper()}_STARTED")
+
+    def status_from_events(self, stage):
+        """Derive display status from the event log for the active run."""
+        events = self.state.get("events", [])
+        run_start = 0
+        for i, e in enumerate(events):
+            if e.get("event") == "LEAD_GEN_STARTED":
+                run_start = i
+        status = "pending"
+        prefix = stage.upper()
+        for e in events[run_start:]:
+            ev = e.get("event", "")
+            if ev == f"{prefix}_STARTED":
+                status = "running"
+            elif ev == f"{prefix}_COMPLETED":
+                status = "completed"
+            elif ev == f"{prefix}_FAILED":
+                status = "failed"
+        return status
 
     def done(self, stage, **stats):
         self.state["stages"][stage] = {
@@ -301,6 +329,7 @@ def main():
 
     job.state["config"] = {k: v for k, v in vars(a).items() if v not in (None, False, "")}
     job.emit("LEAD_GEN_STARTED", stages=todo)
+    job.reset_stages(todo)
 
     print(f"\nLeadForge  |  {len(todo)} stage(s): {' -> '.join(todo)}")
     caps = C.available()
