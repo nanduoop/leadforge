@@ -21,6 +21,21 @@ Start from the stage you actually need:
 ./run.sh --status            # what has run and what has not
 ```
 
+**`data/qualified.json` is stale in one specific way.** It was written before the
+listicle fix in §5 landed, so two of its eight records are the exact listicles that fix
+was written to reject:
+
+```
+fundraiseinsider.com    List of Recently Funded Startups in the USA (2026)
+f6s.com                 100 Top Consumer Companies in United States · July 2026
+```
+
+`is_listicle()` now lives at `discover.py:167` and is applied at `discover.py:201`, so a
+fresh run would drop both. Until someone re-runs discovery, expect those two to yield
+nothing from any downstream stage. That is the stale data, not a regression. The six real
+records are digitalmediamanagement.com, intro.com, wattpad.com, snowball.com, clickup.com
+and superpower.com.
+
 ---
 
 ## Agent 1 — Migrate `contacts.py` off `FIRECRAWL_EXTRACT`
@@ -52,7 +67,8 @@ Already handled — do not re-fix. `contacts.py:111` reads both `item["people"]`
 `item["data"]["people"]`, so either response envelope parses.
 
 **Done when** `.venv/bin/python src/contacts.py` returns a non-zero contact count against
-the existing `data/qualified.json`.
+the existing `data/qualified.json`. Judge it on the six real records — the two listicles
+noted above have no team page and will correctly yield nothing.
 
 ## Agent 2 — Tests for `schema.py`, `dedup.py`, `score.py`
 
