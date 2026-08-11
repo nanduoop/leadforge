@@ -1,0 +1,13 @@
+"$schema" = "https://conductor.build/schemas/settings.repo.schema.json"
+
+[scripts]
+setup = "./setup.sh --install"
+run_mode = "concurrent"
+
+[scripts.run.pipeline]
+command = "./run.sh --resume"
+icon = "play"
+
+[scripts.run.preflight]
+command = ".venv/bin/python src/preflight.py"
+icon = "list-checks"

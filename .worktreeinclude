@@ -1,0 +1,13 @@
+# Gitignored files every workspace needs. Copied from the repository root directory.
+#
+# config/brief.json  - contacts.py and the orchestrator load this at startup; without
+#                      it a fresh worktree hard-fails before the first stage runs.
+# data/              - stage outputs from the last live run. Keeping them means an
+#                      agent can re-run one stage (./run.sh --from contacts) instead
+#                      of re-running discover and burning Firecrawl credits again.
+#
+# .venv/ is deliberately absent. Python bakes absolute paths into .venv/bin, so a
+# copied venv points back at the root directory. scripts.setup rebuilds it instead.
+
+config/brief.json
+data/
