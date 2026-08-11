@@ -56,7 +56,7 @@ if [[ -d .venv ]]; then
     no "python deps"
     if [[ $INSTALL -eq 1 ]]; then
       .venv/bin/pip install -q --upgrade pip
-      .venv/bin/pip install -q stagehand dnspython && ok "installed deps"
+      .venv/bin/pip install -q stagehand dnspython fastapi uvicorn pytest && ok "installed deps"
     else
       act "./setup.sh --install"
     fi

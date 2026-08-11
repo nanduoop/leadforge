@@ -155,6 +155,88 @@ def from_text(text, brief):
     return brief
 
 
+def fill_from_answers(brief, answers, overwrite=False):
+    """Apply wizard answers to a brief. answers maps field names to values."""
+    def current(field):
+        return brief["client"].get(field) or brief["icp"].get(field) or ""
+
+    brief["meta"].setdefault("gaps", [])
+    for field, _prompt, required in QUESTIONS:
+        if not overwrite and current(field):
+            continue
+        raw = answers.get(field)
+        if raw is None or (isinstance(raw, str) and not raw.strip()):
+            if required and not current(field):
+                if field not in brief["meta"]["gaps"]:
+                    brief["meta"]["gaps"].append(field)
+            continue
+        if field in LIST_FIELDS:
+            if isinstance(raw, list):
+                value = [str(x).strip() for x in raw if str(x).strip()]
+            else:
+                value = [p.strip() for p in str(raw).split(",") if p.strip()]
+        else:
+            value = str(raw).strip()
+        if field in brief["client"]:
+            brief["client"][field] = value
+        else:
+            brief["icp"][field] = value
+        if field in brief["meta"]["gaps"]:
+            brief["meta"]["gaps"].remove(field)
+    return brief
+
+
+def brief_summary(brief):
+    """Structured summary for the review step."""
+    c, i = brief["client"], brief["icp"]
+    return {
+        "client_name": c.get("name") or "",
+        "site": c.get("site") or "",
+        "offer": c.get("offer") or "",
+        "outcome": c.get("outcome") or "",
+        "industries": i.get("target_industries") or [],
+        "titles": i.get("target_titles") or [],
+        "markets": i.get("target_markets") or [],
+        "company_size": i.get("company_size") or "",
+        "signals": i.get("buying_signals") or [],
+        "exclusions": i.get("exclusions") or [],
+        "proof": c.get("proof") or [],
+        "gaps": brief.get("meta", {}).get("gaps") or [],
+        "sources": brief.get("meta", {}).get("source") or [],
+    }
+
+
+def questions_for_ui():
+    """Return intake questions formatted for the web wizard."""
+    client_fields = {"offer", "outcome", "proof"}
+    out = []
+    for field, prompt, required in QUESTIONS:
+        out.append({
+            "field": field,
+            "prompt": prompt,
+            "required": required,
+            "section": "client" if field in client_fields else "icp",
+            "multiline": field in ("offer", "outcome"),
+            "list": field in LIST_FIELDS,
+        })
+    return out
+
+
+def save_brief(brief, path=BRIEF):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    json.dump(brief, open(path, "w"), indent=2)
+    return path
+
+
+def load_brief(path=BRIEF):
+    if not os.path.exists(path):
+        return blank_brief()
+    try:
+        return json.load(open(path))
+    except Exception:
+        return blank_brief()
+
+
 def ask(brief, auto=False):
     """Fill what is still missing. Skipped entirely under --yes."""
     def current(field):

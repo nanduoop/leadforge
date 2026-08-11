@@ -93,18 +93,22 @@ def find_for(lead, wanted, use_browser=False):
         return []
 
     base = f"https://{domain}"
-    urls = [base + p for p in PAGES]
+    prompt = ("List the people named on this page with their job titles. "
+              "Include an email or LinkedIn URL only if actually shown on the page. "
+              "Never invent or guess contact details.")
 
-    task = R.Task("structured_pages", {
-        "urls": urls, "schema": PEOPLE_SCHEMA,
-        "prompt": ("List the people named on these pages with their job titles. "
-                   "Include an email or LinkedIn URL only if actually shown on the page. "
-                   "Never invent or guess contact details."),
-    }, javascript_heavy=use_browser)
-
-    result = R.run(task)
     people = []
-    if result.ok:
+    origin = "team_page"
+    for page in PAGES:
+        task = R.Task("structured_pages", {
+            "url": base + page,
+            "schema": PEOPLE_SCHEMA,
+            "prompt": prompt,
+        }, javascript_heavy=use_browser)
+        result = R.run(task)
+        if not result.ok:
+            continue
+        origin = "team_page" if result.source == "firecrawl" else "browser"
         for item in result.items:
             if not isinstance(item, dict):
                 continue
@@ -120,7 +124,7 @@ def find_for(lead, wanted, use_browser=False):
                     "title": (p.get("title") or "").strip(),
                     "email": (p.get("email") or "").strip().lower(),
                     "linkedin": (p.get("linkedin") or "").strip(),
-                    "origin": "team_page" if result.source == "firecrawl" else "browser",
+                    "origin": origin,
                 })
 
     if not people:

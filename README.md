@@ -11,8 +11,29 @@ derived from your brief rather than hardcoded.
 
 ```bash
 ./setup.sh --install
+./start-ui.sh                  # guided web wizard (recommended)
 ./run.sh --site yourcompany.com
 ```
+
+## Web UI
+
+LeadForge ships with a local step-by-step wizard for setup, intake, pipeline progress, and results.
+
+```bash
+./start-ui.sh
+# opens http://127.0.0.1:7842
+```
+
+The wizard walks through:
+
+1. **Connections** — Composio status for Firecrawl, Google Sheets, NeverBounce, HubSpot
+2. **Your business** — reads your website and pre-fills the brief
+3. **Target audience** — ICP questions (industries, titles, markets, buying signals)
+4. **Review** — discovery preview with estimated Firecrawl credits before spending
+5. **Pipeline** — live progress across all eight stages
+6. **Results** — scored leads table and CSV download
+
+Firecrawl is required. Google Sheets is optional (CSV is always written locally). Browserbase and Agent Reach unlock additional discovery paths when configured.
 
 ## What makes this different from a scraper
 

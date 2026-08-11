@@ -207,15 +207,47 @@ def scrape(url, formats=("markdown",)):
     return {"ok": bool(text), "text": text, "url": url, "error": None}
 
 
+def _unwrap_json(d):
+    """Pull structured json from a FIRECRAWL_SCRAPE response."""
+    if not isinstance(d, dict):
+        return None
+    if isinstance(d.get("json"), dict):
+        return d["json"]
+    inner = d.get("data")
+    if isinstance(inner, dict) and isinstance(inner.get("json"), dict):
+        return inner["json"]
+    return None
+
+
 def extract(urls, schema, prompt):
     """
-    Pull structured fields off pages. This is the one that finds decision makers,
-    because it reads a team page and returns names and titles rather than raw text.
+    Pull structured fields off pages via FIRECRAWL_SCRAPE + formats:json.
+
+    SCRAPE takes a single url, so this loops and merges people arrays. Replaces
+    the deprecated FIRECRAWL_EXTRACT path that cost 21 credits and returned empty.
     """
-    r = execute("FIRECRAWL_EXTRACT",
-                {"urls": list(urls), "schema": schema, "prompt": prompt},
-                timeout=120)
-    return r["data"] if r["ok"] else None
+    merged_people = []
+    other = {}
+    for url in urls:
+        r = execute("FIRECRAWL_SCRAPE", {
+            "url": url,
+            "formats": ["json"],
+            "jsonOptions": {"prompt": prompt, "schema": schema},
+        }, timeout=120)
+        if not r["ok"]:
+            continue
+        data = _unwrap_json(r["data"] or {})
+        if not data:
+            continue
+        block = data.get("people") or []
+        if isinstance(block, list):
+            merged_people.extend(block)
+        for k, v in data.items():
+            if k != "people":
+                other[k] = v
+    if merged_people:
+        return {"people": merged_people, **other}
+    return other if other else None
 
 
 # ------------------------------------------------------------ browserbase / stagehand

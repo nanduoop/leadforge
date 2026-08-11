@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LeadForge</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">LF</div>
+        <div>
+          <h1>LeadForge</h1>
+          <p>Evidence-backed lead generation</p>
+        </div>
+      </div>
+      <nav id="step-nav" class="step-nav"></nav>
+      <div class="sidebar-foot">
+        <p>Open source · Composio connectors · Your API keys</p>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow" id="step-eyebrow">Step 1 of 6</p>
+          <h2 id="step-title">Welcome</h2>
+        </div>
+        <div class="topbar-actions">
+          <button type="button" class="btn ghost" id="btn-back" hidden>Back</button>
+          <button type="button" class="btn primary" id="btn-next">Continue</button>
+        </div>
+      </header>
+
+      <section class="panel" id="panel-welcome">
+        <div class="hero">
+          <h3>Turn your business description into verified, scored leads</h3>
+          <p>LeadForge walks you through setup, builds a search brief from your website, runs discovery across five independent paths, finds decision makers, verifies every contact, and exports with evidence attached.</p>
+        </div>
+        <div class="cards three">
+          <article class="card">
+            <h4>Nothing trusted without proof</h4>
+            <p>Every claim carries a URL, source type, and confidence score. Five syndicated copies count once.</p>
+          </article>
+          <article class="card">
+            <h4>Discovery ≠ verification</h4>
+            <p>The stage that finds a lead never rules on whether it is real. Verification reads the record fresh.</p>
+          </article>
+          <article class="card">
+            <h4>Bring your own tools</h4>
+            <p>Firecrawl and Composio get you started free. Upgrade Browserbase, Apollo, or Clay when you need scale.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="panel hidden" id="panel-setup">
+        <p class="lead">Connect the services you need. Only Firecrawl is required to run discovery.</p>
+        <div id="setup-checks" class="check-list"></div>
+        <h3 class="section-title">Integrations</h3>
+        <div id="integrations" class="integration-grid"></div>
+      </section>
+
+      <section class="panel hidden" id="panel-business">
+        <p class="lead">Start with your website. LeadForge reads it and pre-fills what it can.</p>
+        <label class="field">
+          <span>Your website</span>
+          <input type="url" id="input-site" placeholder="https://yourcompany.com">
+        </label>
+        <button type="button" class="btn secondary" id="btn-read-site">Read website</button>
+        <p class="hint" id="site-status"></p>
+        <label class="field">
+          <span>Or describe your business in plain language</span>
+          <textarea id="input-text" rows="4" placeholder="We sell video editing services to US SaaS companies…"></textarea>
+        </label>
+      </section>
+
+      <section class="panel hidden" id="panel-icp">
+        <p class="lead">Fill the gaps. These answers drive who LeadForge searches for.</p>
+        <div id="icp-form" class="form-grid"></div>
+      </section>
+
+      <section class="panel hidden" id="panel-review">
+        <p class="lead">Review your brief before spending any credits.</p>
+        <div id="brief-summary" class="summary-grid"></div>
+        <div id="brief-gaps" class="alert hidden"></div>
+        <h3 class="section-title">Discovery preview</h3>
+        <div id="discover-preview" class="preview-box">Loading preview…</div>
+        <details class="advanced">
+          <summary>Advanced settings</summary>
+          <div class="form-grid two">
+            <label class="field">
+              <span>Max search queries</span>
+              <input type="number" id="input-limit" value="60" min="12" max="120">
+            </label>
+            <label class="field">
+              <span>Max companies to enrich</span>
+              <input type="number" id="input-max-companies" value="60" min="5" max="200">
+            </label>
+            <label class="field">
+              <span>Min verification confidence</span>
+              <input type="number" id="input-min-confidence" value="70" min="0" max="100">
+            </label>
+          </div>
+        </details>
+      </section>
+
+      <section class="panel hidden" id="panel-run">
+        <p class="lead" id="run-lead">Starting pipeline…</p>
+        <div class="progress-track">
+          <div class="progress-bar" id="progress-bar"></div>
+        </div>
+        <div id="stage-list" class="stage-list"></div>
+        <div class="event-log">
+          <h4>Activity</h4>
+          <ul id="event-log"></ul>
+        </div>
+      </section>
+
+      <section class="panel hidden" id="panel-results">
+        <div class="results-head">
+          <p class="lead" id="results-summary">Your leads are ready.</p>
+          <div class="results-actions">
+            <a class="btn secondary" id="btn-download-csv" href="/api/leads/csv">Download CSV</a>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table id="leads-table">
+            <thead></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

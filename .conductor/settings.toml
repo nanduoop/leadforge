@@ -11,3 +11,7 @@ icon = "play"
 [scripts.run.preflight]
 command = ".venv/bin/python src/preflight.py"
 icon = "list-checks"
+
+[scripts.run.ui]
+command = "./start-ui.sh"
+icon = "layout"

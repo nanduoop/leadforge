@@ -119,10 +119,16 @@ def _agent_reach_search(payload):
 
 
 def _firecrawl_extract(payload):
-    data = C.extract(payload["urls"], payload["schema"], payload["prompt"])
+    urls = payload.get("urls")
+    if urls is None:
+        url = payload.get("url")
+        urls = [url] if url else []
+    if not urls:
+        return SourceResult(FIRECRAWL, "error", error="no url(s)", cost=2)
+    data = C.extract(urls, payload["schema"], payload["prompt"])
     if data is None:
-        return SourceResult(FIRECRAWL, "error", error="extract returned nothing", cost=5)
-    return SourceResult(FIRECRAWL, "success", items=[data], cost=5)
+        return SourceResult(FIRECRAWL, "error", error="extract returned nothing", cost=2)
+    return SourceResult(FIRECRAWL, "success", items=[data], cost=2)
 
 
 def _browser_extract(payload):

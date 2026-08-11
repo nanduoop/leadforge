@@ -150,6 +150,34 @@ def c_writable():
             check(f"{d}/ writable", FAIL, "not writable", f"chmod u+w {p}")
 
 
+def run_checks():
+    """Run all preflight checks and return structured results for the UI."""
+    results.clear()
+    for fn in (c_python, c_deps, c_composio, c_browser, c_agent_reach,
+               c_brief, c_secrets, c_writable):
+        try:
+            fn()
+        except Exception as e:
+            check(fn.__name__, WARN, f"check crashed: {str(e)[:60]}")
+
+    checks = []
+    for name, status, detail, fix in results:
+        checks.append({
+            "name": name,
+            "status": status,
+            "detail": detail,
+            "fix": fix,
+        })
+    fails = sum(1 for c in checks if c["status"] == FAIL)
+    warns = sum(1 for c in checks if c["status"] == WARN)
+    return {
+        "checks": checks,
+        "ready": fails == 0,
+        "blocking": fails,
+        "warnings": warns,
+    }
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--strict", action="store_true", help="exit non-zero on warnings")
