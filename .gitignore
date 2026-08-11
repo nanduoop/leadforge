@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+# Never commit a credential or a client's data.
+config/secrets.json
+config/brief.json
+data/
+logs/
+*.csv
+.DS_Store
