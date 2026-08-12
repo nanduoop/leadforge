@@ -69,6 +69,27 @@ echo "Composio  (one connection layer for every business app)"
 COMPOSIO="$HOME/.composio/composio"
 [[ -x "$COMPOSIO" ]] || COMPOSIO="$(command -v composio || true)"
 
+# Headless path. No one can click through OAuth inside a container, so a cloud
+# run inherits the connections a human already made: same Composio account,
+# reached with an API key instead of a browser.
+[[ -f .env ]] && . ./.env 2>/dev/null || true
+if [[ -z "$COMPOSIO" ]] && [[ $INSTALL -eq 1 ]] && [[ -n "${COMPOSIO_API_KEY:-}" ]]; then
+  no "composio CLI missing, installing for headless run"
+  if command -v npm >/dev/null 2>&1; then
+    npm install -g composio >/dev/null 2>&1 && COMPOSIO="$(command -v composio || true)"
+  else
+    curl -fsSL https://composio.dev/install.sh | bash >/dev/null 2>&1
+    COMPOSIO="$HOME/.composio/composio"
+    [[ -x "$COMPOSIO" ]] || COMPOSIO="$(command -v composio || true)"
+  fi
+fi
+if [[ -n "$COMPOSIO" ]] && [[ -n "${COMPOSIO_API_KEY:-}" ]]; then
+  if ! "$COMPOSIO" connections list >/dev/null 2>&1; then
+    "$COMPOSIO" login --user-api-key "$COMPOSIO_API_KEY" --no-browser -y \
+      >/dev/null 2>&1 && ok "composio authenticated from COMPOSIO_API_KEY"
+  fi
+fi
+
 if [[ -n "$COMPOSIO" ]]; then
   ok "composio CLI"
   CONNS="$("$COMPOSIO" connections list 2>/dev/null || echo '{}')"
@@ -91,7 +112,8 @@ if [[ -n "$COMPOSIO" ]]; then
   for a in neverbounce zerobounce hubspot; do check_app "$a"; done
 else
   no "composio CLI not installed"
-  act "curl -fsSL https://composio.dev/install.sh | bash"
+  act "npm install -g composio   (or: curl -fsSL https://composio.dev/install.sh | bash)"
+  act "headless: set COMPOSIO_API_KEY in .env and rerun ./setup.sh --install"
 fi
 
 # ---------------------------------------------------------------- browserbase

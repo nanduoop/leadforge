@@ -2,6 +2,7 @@
 __pycache__/
 *.pyc
 # Never commit a credential or a client's data.
+.env
 config/secrets.json
 config/brief.json
 data/
