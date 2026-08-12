@@ -181,31 +181,31 @@ def run_checks():
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--strict", action="store_true", help="exit non-zero on warnings")
+    ap.add_argument("--json", action="store_true",
+                    help="machine-readable output, for agents driving this repo")
     a = ap.parse_args()
 
+    report = run_checks()
+
+    # An agent should never have to parse the human table to find out whether it
+    # can run. Same data, one shape it can branch on.
+    if a.json:
+        print(json.dumps(report, indent=2))
+        sys.exit(1 if report["blocking"] or (a.strict and report["warnings"]) else 0)
+
     print("\nLeadForge preflight\n" + "=" * 66)
-    for fn in (c_python, c_deps, c_composio, c_browser, c_agent_reach,
-               c_brief, c_secrets, c_writable):
-        try:
-            fn()
-        except Exception as e:
-            check(fn.__name__, WARN, f"check crashed: {str(e)[:60]}")
-
-    fails = [r for r in results if r[1] == FAIL]
-    warns = [r for r in results if r[1] == WARN]
-
-    for name, status, detail, fix in results:
-        mark = {OK: "ok  ", WARN: "warn", FAIL: "FAIL"}[status]
-        print(f"  {mark}  {name:22} {detail[:44]}")
-        if fix and status != OK:
-            print(f"        -> {fix}")
+    for c in report["checks"]:
+        mark = {OK: "ok  ", WARN: "warn", FAIL: "FAIL"}[c["status"]]
+        print(f"  {mark}  {c['name']:22} {c['detail'][:44]}")
+        if c["fix"] and c["status"] != OK:
+            print(f"        -> {c['fix']}")
 
     print("=" * 66)
-    if fails:
-        print(f"{len(fails)} blocking problem(s). The pipeline cannot run.\n")
+    if report["blocking"]:
+        print(f"{report['blocking']} blocking problem(s). The pipeline cannot run.\n")
         sys.exit(1)
-    if warns:
-        print(f"Ready, with {len(warns)} warning(s). Quality will be lower than it could be.\n")
+    if report["warnings"]:
+        print(f"Ready, with {report['warnings']} warning(s). Quality will be lower than it could be.\n")
         sys.exit(1 if a.strict else 0)
     print("All good.\n")
 

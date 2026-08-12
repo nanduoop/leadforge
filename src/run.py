@@ -69,6 +69,7 @@ class Job:
         """Clear stage status so a new run does not inherit stale completions."""
         for name in names:
             self.state["stages"][name] = {"status": "pending"}
+        self.save()
 
     def start(self, stage):
         if stage in STAGES:
@@ -78,12 +79,42 @@ class Job:
         self.state["stages"][stage] = {"status": "running", "started_at": now()}
         self.emit(f"{stage.upper()}_STARTED")
 
+    def progress(self, stage, current, total, message=None):
+        """Update in-stage progress for the UI without flooding the event log."""
+        pct = round(100 * current / total) if total else 0
+        info = self.state["stages"].get(stage, {})
+        info.update({
+            "status": "running",
+            "progress": {
+                "current": current,
+                "total": total,
+                "percent": pct,
+                "message": message or "",
+            },
+        })
+        self.state["stages"][stage] = info
+        tick = max(1, total // 25) if total else 1
+        if current == total or current == 1 or current % tick == 0:
+            self.emit(
+                f"{stage.upper()}_PROGRESS",
+                current=current,
+                total=total,
+                message=message or "",
+            )
+        self.save()
+
     def status_from_events(self, stage):
-        """Derive display status from the event log for the active run."""
+        """Derive display status from the event log for the active run.
+
+        The window opens at whichever came last: the start of a run, or a reset.
+        Including PIPELINE_RESET is what makes the reset button mean anything —
+        it clears `stages`, and this view reads events, so without the reset
+        marker every completion from the previous run leaks through forever.
+        """
         events = self.state.get("events", [])
         run_start = 0
         for i, e in enumerate(events):
-            if e.get("event") == "LEAD_GEN_STARTED":
+            if e.get("event") in ("LEAD_GEN_STARTED", "PIPELINE_RESET"):
                 run_start = i
         status = "pending"
         prefix = stage.upper()
@@ -136,6 +167,10 @@ def stage_intake(job, args):
         sys.argv += ["--text", args.text]
     if args.file:
         sys.argv += ["--file", args.file]
+    if args.answers:
+        sys.argv += ["--answers", args.answers]
+    if args.reintake:
+        sys.argv += ["--reintake"]
     if args.yes:
         sys.argv += ["--yes"]
     try:
@@ -157,16 +192,21 @@ def stage_discover(job, args):
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
     leads, statuses = [], {}
+    total = len(queries)
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
         futs = {pool.submit(discover.execute_path, p, q, c, args.per_query): p
                 for p, q, c in queries}
-        for fut in as_completed(futs):
+        for i, fut in enumerate(as_completed(futs), 1):
             try:
                 got, res = fut.result()
                 leads.extend(got)
                 statuses[res.status] = statuses.get(res.status, 0) + 1
             except Exception:
                 statuses["error"] = statuses.get("error", 0) + 1
+            job.progress(
+                "discover", i, total,
+                message=f"{len(leads)} companies found across {i} queries",
+            )
 
     save(leads, ARTIFACT["discover"])
     return {"queries": len(queries), "raw_hits": len(leads), "statuses": statuses}
@@ -208,7 +248,16 @@ def stage_contacts(job, args):
     import contacts
     icp = json.load(open(ARTIFACT["intake"]))["icp"]
     leads = load(ARTIFACT["qualify"])
-    out = contacts.enrich(leads, icp, use_browser=args.browser, workers=args.workers)
+    def on_progress(current, total, found):
+        job.progress(
+            "contacts", current, total,
+            message=f"{found} contacts from {current} of {total} companies",
+        )
+
+    out = contacts.enrich(
+        leads, icp, use_browser=args.browser, workers=args.workers,
+        on_progress=on_progress,
+    )
     save(out, ARTIFACT["contacts"])
     with_email = sum(1 for l in out if (l.contact or {}).get("email"))
     return {"companies": len(leads), "contacts": len(out), "with_email": with_email}
@@ -217,7 +266,16 @@ def stage_contacts(job, args):
 def stage_verify(job, args):
     import verify
     leads = load(ARTIFACT["contacts"])
-    out = verify.verify_leads(leads, use_paid=not args.no_paid, workers=args.workers)
+    def on_progress(current, total, passed):
+        job.progress(
+            "verify", current, total,
+            message=f"{passed} passed verification ({current}/{total})",
+        )
+
+    out = verify.verify_leads(
+        leads, use_paid=not args.no_paid, workers=args.workers,
+        on_progress=on_progress,
+    )
     save(out, ARTIFACT["verify"])
     passed = sum(1 for l in out
                  if (l.verification or {}).get("confidence", 0) >= args.min_confidence)
@@ -268,6 +326,49 @@ RUNNERS = {
 
 # ---------------------------------------------------------------------------- driver
 
+def plan_report(brief, cap):
+    """What a discovery run would cost, without spending anything.
+
+    This is the gate in front of the only stages that bill. An agent has to be
+    able to reach it in one command, or it will skip the estimate and run.
+    """
+    import discover
+    plan = discover.plan(brief, cap=cap)
+    by_path = {}
+    for path_name, _query, _cap in plan:
+        by_path[path_name] = by_path.get(path_name, 0) + 1
+    return {
+        "total_queries": len(plan),
+        "estimated_credits": len(plan) * 2,
+        "by_path": by_path,
+        "sample": [{"path": p, "query": q} for p, q, _ in plan[:8]],
+    }
+
+
+def status_report(job):
+    """Pipeline state as data. Agents drive this repo; give them something to parse."""
+    stages = []
+    for s in STAGES:
+        info = job.state["stages"].get(s, {})
+        artifact = ARTIFACT.get(s, "")
+        stages.append({
+            "stage": s,
+            "status": job.status_from_events(s),
+            "artifact": os.path.relpath(artifact, ROOT) if artifact else None,
+            "artifact_exists": os.path.exists(artifact) if artifact else False,
+            "stats": {k: v for k, v in info.items()
+                      if k not in ("status", "started_at", "finished_at", "failed_at")},
+        })
+    return {
+        "job": os.path.relpath(JOB, ROOT),
+        "stages": stages,
+        "next_stage": next((s["stage"] for s in stages if s["status"] != "completed"), None),
+        "complete": all(s["status"] == "completed" for s in stages),
+        "failed": [s["stage"] for s in stages if s["status"] == "failed"],
+        "events": job.state.get("events", [])[-10:],
+    }
+
+
 def show_status(job):
     print(f"\njob state  {os.path.relpath(JOB, ROOT)}")
     print("-" * 62)
@@ -290,11 +391,15 @@ def show_status(job):
 def main():
     ap = argparse.ArgumentParser(description="LeadForge pipeline controller")
     ap.add_argument("--site"); ap.add_argument("--text"); ap.add_argument("--file")
+    ap.add_argument("--answers",
+                    help="JSON object of intake field -> answer, or a path to one")
     ap.add_argument("--yes", action="store_true", help="never prompt during intake")
     ap.add_argument("--resume", action="store_true", help="skip completed stages")
     ap.add_argument("--from", dest="from_stage", choices=STAGES, help="rerun from here")
     ap.add_argument("--only", choices=STAGES, help="run exactly one stage")
     ap.add_argument("--status", action="store_true")
+    ap.add_argument("--plan", action="store_true",
+                    help="what a run would cost, without spending anything")
     ap.add_argument("--reintake", action="store_true", help="rebuild the brief")
     ap.add_argument("--limit", type=int, default=60, help="max discovery queries")
     ap.add_argument("--per-query", type=int, default=10)
@@ -308,11 +413,32 @@ def main():
     ap.add_argument("--no-paid", action="store_true")
     ap.add_argument("--to", default="auto", choices=["auto", "sheets", "csv"])
     ap.add_argument("--title", default=None)
+    ap.add_argument("--json", action="store_true",
+                    help="machine-readable output, for agents driving this repo")
     a = ap.parse_args()
 
     job = Job()
     if a.status:
-        show_status(job)
+        if a.json:
+            print(json.dumps(status_report(job), indent=2))
+        else:
+            show_status(job)
+        return
+
+    if a.plan:
+        brief_path = ARTIFACT["intake"]
+        if not os.path.exists(brief_path):
+            print("no brief yet. run --only intake first.")
+            sys.exit(1)
+        report = plan_report(json.load(open(brief_path)), a.limit)
+        if a.json:
+            print(json.dumps(report, indent=2))
+        else:
+            print(f"\n{report['total_queries']} search queries "
+                  f"(~{report['estimated_credits']} Firecrawl credits)")
+            for name, n in report["by_path"].items():
+                print(f"  {name:10} {n}")
+            print("\nnothing has been spent. add --resume to run.\n")
         return
 
     if a.only:
@@ -330,6 +456,14 @@ def main():
     job.state["config"] = {k: v for k, v in vars(a).items() if v not in (None, False, "")}
     job.emit("LEAD_GEN_STARTED", stages=todo)
     job.reset_stages(todo)
+
+    # Stages outside `todo` are carried over from an earlier run rather than
+    # re-run. The UI derives status from events since the last LEAD_GEN_STARTED,
+    # so without a marker here they read as "pending" alongside a finished
+    # export — the "25% complete / all stages finished" screen. Record the reuse.
+    for stage in STAGES:
+        if stage not in todo and job.completed(stage):
+            job.emit(f"{stage.upper()}_COMPLETED", reused=True)
 
     print(f"\nLeadForge  |  {len(todo)} stage(s): {' -> '.join(todo)}")
     caps = C.available()

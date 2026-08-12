@@ -54,6 +54,74 @@ PEOPLE_SCHEMA = {
 # extractor spends real time on them. Measured: 6 paths took >25 min for 8 companies.
 PAGES = ["", "/about", "/team"]
 
+# Shared inboxes. A message to one of these reaches a queue, not a person, so it
+# cannot back a claim that we found a decision maker. An earlier run exported
+# three rows for one company all sharing careers@ — the same jobs inbox, three times.
+GENERIC_LOCALPARTS = {
+    "careers", "career", "jobs", "job", "recruiting", "recruitment", "hiring",
+    "hr", "info", "hello", "hey", "contact", "enquiries", "inquiries", "support",
+    "help", "admin", "office", "team", "sales", "press", "media", "marketing",
+    "billing", "accounts", "legal", "privacy", "security", "noreply", "no-reply",
+    "donotreply", "mail", "email", "general", "ask", "welcome", "service",
+}
+
+# How many contacts we keep per company. More than two fills the list with the same
+# brand and crowds out other companies — the exact failure seen in the 11 Aug run.
+MAX_PER_COMPANY = 2
+
+# Words that mean the string is a role, not a human. The old check was
+# `len(name.split()) >= 2`, which happily accepted "Associate Director, Project
+# Management" as a person's name because it has three words.
+TITLE_WORDS = {
+    "director", "manager", "engineer", "developer", "designer", "analyst",
+    "specialist", "coordinator", "associate", "assistant", "intern", "internship",
+    "lead", "head", "chief", "officer", "president", "vp", "svp", "evp", "founder",
+    "partner", "consultant", "executive", "supervisor", "administrator",
+    "representative", "strategist", "producer", "editor", "writer", "recruiter",
+    "architect", "scientist", "technician", "apprentice", "trainee", "generalist",
+    "jr", "jr.", "sr", "sr.", "junior", "senior", "staff", "principal",
+}
+
+
+def is_generic_inbox(email):
+    """True if this address reaches a queue rather than a named person."""
+    local = (email or "").split("@")[0].strip().lower()
+    if not local:
+        return True
+    if local in GENERIC_LOCALPARTS:
+        return True
+    # careers-uk, jobs.us, hr_india and friends.
+    head = re.split(r"[.\-_+]", local)[0]
+    return head in GENERIC_LOCALPARTS
+
+
+def looks_like_person(name):
+    """Reject job listings, department names and page furniture posing as people.
+
+    Scraping a careers page returns rows that look structurally identical to a
+    team page: a string and a title. The only thing separating them is whether
+    the string is plausibly somebody's name.
+    """
+    n = (name or "").strip()
+    if not n or "," in n or "/" in n or "|" in n or " - " in n or " – " in n:
+        return False
+    if any(ch.isdigit() for ch in n):
+        return False
+
+    parts = n.split()
+    if not 2 <= len(parts) <= 4:
+        return False
+    # Any word that is a job title disqualifies the whole string.
+    if any(p.lower().strip(".,") in TITLE_WORDS for p in parts):
+        return False
+    # Real names are capitalised; "open roles" and "SENIOR EDITOR" are not.
+    if not all(p[:1].isupper() and not p.isupper() for p in parts if p[:1].isalpha()):
+        return False
+    # Names shorter than 2 characters per part are likely initials or noise
+    if any(len(p.strip(".")) < 2 for p in parts):
+        return False
+    return True
+
 
 def title_matches(title, wanted):
     t = (title or "").lower().strip()
@@ -72,18 +140,61 @@ def title_matches(title, wanted):
 
 
 def pattern_from(known, first, last, domain):
-    """Copy the company's own convention. Only ever called with a real address."""
-    if not (known and first and last):
+    """Copy the company's own convention. Falls back to first.last@domain if empty."""
+    if not (first and last and domain):
         return None
-    local = known.split("@")[0].lower()
     f, l = first.lower(), last.lower()
+    if not known:
+        return f"{f}.{l}@{domain}"
+    local = known.split("@")[0].lower()
     for shape, out in (
         (f"{f}.{l}", f"{f}.{l}"), (f"{f}_{l}", f"{f}_{l}"),
         (f"{f[0]}{l}", f"{f[0]}{l}"), (f"{f}{l}", f"{f}{l}"), (f, f),
     ):
         if local == shape:
             return f"{out}@{domain}"
-    return None
+    return f"{f}.{l}@{domain}"
+
+
+def people_from_item(item, origin="team_page"):
+    """Pull the people list out of one extraction result, whatever shape it came in.
+
+    Extractors wrap their JSON differently — some return `{"people": [...]}`,
+    some nest it under `data`. Anyone without a full name is dropped: a first
+    name alone cannot be matched to a company or used to personalise outreach.
+    """
+    if not isinstance(item, dict):
+        return []
+    block = item.get("people") or (item.get("data") or {}).get("people") or []
+    if not isinstance(block, list):
+        return []
+
+    people = []
+    for p in block:
+        if not isinstance(p, dict):
+            continue
+        name = (p.get("name") or "").strip()
+        if not looks_like_person(name):
+            continue                       # a role or a heading, not somebody to email
+        email = (p.get("email") or "").strip().lower()
+        if email and is_generic_inbox(email):
+            email = ""                     # shared inbox proves nothing about this person
+        people.append({
+            "name": name,
+            "title": (p.get("title") or "").strip(),
+            "email": email,
+            "linkedin": (p.get("linkedin") or "").strip(),
+            "origin": origin,
+        })
+
+    # Same person listed on two pages, or twice on one.
+    seen, unique = set(), []
+    for p in people:
+        key = p["name"].lower()
+        if key not in seen:
+            seen.add(key)
+            unique.append(p)
+    return unique
 
 
 def find_for(lead, wanted, use_browser=False):
@@ -93,8 +204,13 @@ def find_for(lead, wanted, use_browser=False):
         return []
 
     base = f"https://{domain}"
-    prompt = ("List the people named on this page with their job titles. "
-              "Include an email or LinkedIn URL only if actually shown on the page. "
+    prompt = ("List the named individual people on this page with their job titles. "
+              "A person is a human being with a personal name. Do NOT list open job "
+              "postings, vacancies, departments, teams or office locations, even if "
+              "they appear in the same format. If the page is a careers or jobs "
+              "listing rather than a team page, return an empty list. "
+              "Include an email or LinkedIn URL only if actually shown on the page, "
+              "and never a shared inbox like careers@ or info@. "
               "Never invent or guess contact details.")
 
     people = []
@@ -110,39 +226,34 @@ def find_for(lead, wanted, use_browser=False):
             continue
         origin = "team_page" if result.source == "firecrawl" else "browser"
         for item in result.items:
-            if not isinstance(item, dict):
-                continue
-            block = item.get("people") or (item.get("data") or {}).get("people") or []
-            for p in block:
-                if not isinstance(p, dict):
-                    continue
-                name = (p.get("name") or "").strip()
-                if not name or len(name.split()) < 2:
-                    continue                       # no full name, cannot personalise
-                people.append({
-                    "name": name,
-                    "title": (p.get("title") or "").strip(),
-                    "email": (p.get("email") or "").strip().lower(),
-                    "linkedin": (p.get("linkedin") or "").strip(),
-                    "origin": origin,
-                })
+            people.extend(people_from_item(item, origin))
 
     if not people:
         return []
 
+    # Prefer people whose title the client actually asked for. The old fallback was
+    # `ranked or people`, so a company with no matching title contributed whoever
+    # happened to be on the page — that is how a junior social media manager landed
+    # in a list targeting Head of Content. Fall back to at most one person, so an
+    # off-target company can still be a foot in the door without crowding the list.
     ranked = [p for p in people if title_matches(p["title"], wanted)]
-    chosen = (ranked or people)[:3]
-    known = next((p["email"] for p in people if "@" in p.get("email", "")), None)
+    chosen = ranked[:MAX_PER_COMPANY] if ranked else people[:1]
+
+    # Only a personal address reveals the company's convention. Guessing from
+    # careers@ produces careers-shaped nonsense for everyone else on the page.
+    known = next((p["email"] for p in people
+                  if "@" in p.get("email", "") and not is_generic_inbox(p["email"])), None)
 
     out = []
     for p in chosen:
         origin = p["origin"]
-        if not p["email"] and known:
-            parts = p["name"].split()
-            guess = pattern_from(known, parts[0], parts[-1], domain)
-            if guess:
-                p["email"], origin = guess, "pattern"
         if not p["email"]:
+            parts = p["name"].split()
+            if len(parts) >= 2:
+                guess = pattern_from(known or "", parts[0], parts[-1], domain)
+                if guess:
+                    p["email"], origin = guess, "pattern"
+        if not p["email"] or is_generic_inbox(p["email"]):
             continue                               # nothing to verify, nothing to send
 
         person = Lead(company=lead.company, domain=lead.domain)
@@ -171,17 +282,36 @@ def find_for(lead, wanted, use_browser=False):
     return out
 
 
-def enrich(leads, icp, use_browser=False, workers=6):
-    """Called by the orchestrator. Returns one Lead per person found."""
+def enrich(leads, icp, use_browser=False, workers=6, on_progress=None):
+    """Called by the orchestrator. Returns one Lead per person found.
+
+    Domain-level dedup ensures each company is scraped exactly once, even if
+    multiple discovery paths found the same domain. This prevents the output
+    from being dominated by a single brand.
+    """
     wanted = icp.get("target_titles", [])
+
+    # Deduplicate by domain: keep the lead with the most evidence per domain.
+    by_domain = {}
+    for l in leads:
+        d = (l.domain or "").split("/")[0].lower()
+        if not d:
+            continue
+        if d not in by_domain or len(l.evidence) > len(by_domain[d].evidence):
+            by_domain[d] = l
+    unique_leads = list(by_domain.values())
+
     found = []
+    total = len(unique_leads)
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        futs = {pool.submit(find_for, l, wanted, use_browser): l for l in leads}
-        for fut in as_completed(futs):
+        futs = {pool.submit(find_for, l, wanted, use_browser): l for l in unique_leads}
+        for i, fut in enumerate(as_completed(futs), 1):
             try:
                 found.extend(fut.result())
             except Exception:
                 continue
+            if on_progress:
+                on_progress(i, total, len(found))
     return found
 
 

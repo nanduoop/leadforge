@@ -35,15 +35,35 @@ def secret(name, default=None):
     """
     Read a credential without ever committing one.
 
-    Order: real environment, then config/secrets.json (gitignored), then ~/.zshrc.
+    Order: real environment, then .env, then config/secrets.json, then ~/.zshrc.
+    Everything after the first is gitignored.
 
-    The zshrc fallback exists for a specific reason. BROWSERBASE_API_KEY is exported
-    there, but a non-interactive shell (cron, subprocess, CI) does not source zshrc,
-    so the key is invisible exactly when the automation runs unattended. Verified on
-    11 Aug 2026: the key is in zshrc and absent from a fresh non-interactive shell.
+    `.env` is the portable layer — it is the one a container, a CI job or a cloud
+    agent can be handed. The zshrc fallback below is the opposite: a local macOS
+    patch. BROWSERBASE_API_KEY is exported there, but a non-interactive shell does
+    not source zshrc, so the key goes invisible exactly when automation runs
+    unattended. Keep it for existing machines; do not rely on it anywhere else.
     """
     if os.environ.get(name):
         return os.environ[name]
+
+    if "dotenv" not in _CACHE:
+        found = {}
+        try:
+            with open(os.path.join(ROOT, ".env")) as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    k, v = line.split("=", 1)
+                    v = v.strip().strip('"').strip("'")
+                    if v:
+                        found[k.strip()] = v
+        except Exception:
+            pass
+        _CACHE["dotenv"] = found
+    if _CACHE["dotenv"].get(name):
+        return _CACHE["dotenv"][name]
 
     if "secrets" not in _CACHE:
         path = os.path.join(ROOT, "config", "secrets.json")
@@ -195,16 +215,77 @@ def search(query, limit=10):
 
 
 def scrape(url, formats=("markdown",)):
-    """Fetch one page as text. Returns {ok, text, url}."""
-    r = execute("FIRECRAWL_SCRAPE", {"url": url, "formats": list(formats)})
-    if not r["ok"]:
-        return {"ok": False, "text": "", "url": url, "error": r["error"]}
-    d = r["data"] or {}
-    text = d.get("markdown") or d.get("html") or d.get("content") or ""
-    if not text and isinstance(d.get("data"), dict):
-        inner = d["data"]
-        text = inner.get("markdown") or inner.get("content") or ""
-    return {"ok": bool(text), "text": text, "url": url, "error": None}
+    """
+    Fetch one page as text with multi-layer fallback.
+    Order: Firecrawl -> Browserbase -> Local HTTP Fetch -> Agent Reach
+    """
+    # 1. Firecrawl (if linked)
+    if is_linked("firecrawl"):
+        r = execute("FIRECRAWL_SCRAPE", {"url": url, "formats": list(formats)})
+        if r["ok"]:
+            d = r["data"] or {}
+            text = d.get("markdown") or d.get("html") or d.get("content") or ""
+            if not text and isinstance(d.get("data"), dict):
+                inner = d["data"]
+                text = inner.get("markdown") or inner.get("content") or ""
+            if text.strip():
+                return {"ok": True, "text": text, "url": url, "source": "firecrawl", "error": None}
+
+    # 2. Browserbase / Stagehand (if key present)
+    if browser_available():
+        res = browser_extract(url, "Extract all main visible text content from the page")
+        if res["ok"] and res.get("data"):
+            val = str(res["data"])
+            if len(val) > 50:
+                return {"ok": True, "text": val, "url": url, "source": "browserbase", "error": None}
+
+    # 3. Local HTTP Fetch fallback
+    import urllib.request, re, ssl, gzip, html as html_lib
+    for scheme in ("https://", "http://"):
+        try:
+            target = url if url.startswith(("http://", "https://")) else scheme + url
+            req = urllib.request.Request(
+                target,
+                headers={
+                    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+                    "Accept-Encoding": "identity",
+                }
+            )
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            with urllib.request.urlopen(req, timeout=10, context=ctx) as resp:
+                raw_bytes = resp.read()
+                if resp.info().get("Content-Encoding") == "gzip" or raw_bytes[:2] == b"\x1f\x8b":
+                    try:
+                        raw_bytes = gzip.decompress(raw_bytes)
+                    except Exception:
+                        pass
+                raw_text = raw_bytes.decode("utf-8", errors="ignore")
+                text = html_lib.unescape(raw_text)
+                text = re.sub(r"<script.*?>.*?</script>", " ", text, flags=re.DOTALL | re.IGNORECASE)
+                text = re.sub(r"<style.*?>.*?</style>", " ", text, flags=re.DOTALL | re.IGNORECASE)
+                text = re.sub(r"<.*?>", " ", text)
+                text = re.sub(r"\s+", " ", text).strip()
+                if len(text) > 40:
+                    return {"ok": True, "text": text, "url": target, "source": "local_http", "error": None}
+        except Exception:
+            continue
+
+    # 4. Agent Reach fallback (semantic search for domain)
+    if has_local("agent-reach"):
+        hits = agent_reach(url, limit=3)
+        if hits:
+            text = " ".join([f"{h.get('title', '')}: {h.get('description', '')}" for h in hits])
+            if text.strip():
+                return {"ok": True, "text": text, "url": url, "source": "agent_reach", "error": None}
+
+    return {"ok": False, "text": "", "url": url, "error": "all fetch methods failed"}
+
+
+def _is_rate_limited(error):
+    err = (error or "").lower()
+    return "rate limit" in err or "rate_limit" in err
 
 
 def _unwrap_json(d):
@@ -233,8 +314,10 @@ def extract(urls, schema, prompt):
             "url": url,
             "formats": ["json"],
             "jsonOptions": {"prompt": prompt, "schema": schema},
-        }, timeout=120)
+        }, timeout=90)
         if not r["ok"]:
+            if _is_rate_limited(r.get("error")):
+                break
             continue
         data = _unwrap_json(r["data"] or {})
         if not data:
@@ -245,9 +328,29 @@ def extract(urls, schema, prompt):
         for k, v in data.items():
             if k != "people":
                 other[k] = v
+        if other and not merged_people:
+            break
     if merged_people:
         return {"people": merged_people, **other}
-    return other if other else None
+    if other:
+        return other
+
+    # Fallback: scrape page text via multi-layer fallback
+    import re
+    for url in urls:
+        sc = scrape(url)
+        if sc.get("ok") and sc.get("text"):
+            text = sc["text"]
+            # Extract emails and names from scraped text if present
+            emails = re.findall(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', text)
+            clean_emails = [e for e in emails if not any(e.lower().startswith(p + "@") for p in ("info", "careers", "jobs", "support", "contact"))]
+            if clean_emails:
+                return {
+                    "people": [{"name": clean_emails[0].split("@")[0].replace(".", " ").title(), "title": "Contact", "email": clean_emails[0]}],
+                    "text": text[:500]
+                }
+            return {"text": text[:500]}
+    return None
 
 
 # ------------------------------------------------------------ browserbase / stagehand
@@ -260,12 +363,7 @@ def browser_extract(url, instruction, schema=None):
     """
     Read a page that Firecrawl cannot: heavy JS, infinite scroll, or a real login.
 
-    Stagehand 4.0.0 has a flat client API (act/extract/observe/create/close). Both the
-    published README (which shows client.sessions.*) and the Browserbase onboarding doc
-    (which shows env="BROWSERBASE") describe older versions. Verified against the
-    installed package on 11 Aug 2026.
-
-    Slower and more expensive than scrape(), so callers should try scrape() first.
+    Stagehand 4.0.0 uses async await Stagehand.create().
     """
     key = secret("BROWSERBASE_API_KEY")
     if not key:
@@ -275,24 +373,46 @@ def browser_extract(url, instruction, schema=None):
     except ImportError:
         return {"ok": False, "data": None, "error": "stagehand not installed"}
 
-    os.environ.setdefault("BROWSERBASE_API_KEY", key)
-    client = None
+    os.environ["BROWSERBASE_API_KEY"] = key
+
+    async def _async_extract():
+        client = None
+        try:
+            client = await Stagehand.create()
+            await client.act(f"navigate to {url}")
+            kw = {"instruction": instruction}
+            if schema:
+                kw["schema"] = schema
+            data = await client.extract(**kw)
+            return {"ok": True, "data": data, "error": None}
+        except Exception as e:
+            return {"ok": False, "data": None, "error": f"{type(e).__name__}: {str(e)[:250]}"}
+        finally:
+            if client is not None:
+                try:
+                    await client.close()
+                except Exception:
+                    pass
+
+    import asyncio
     try:
-        client = Stagehand()
-        client.create()
-        client.act(f"navigate to {url}")
-        kw = {"instruction": instruction}
-        if schema:
-            kw["schema"] = schema
-        return {"ok": True, "data": client.extract(**kw), "error": None}
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                return pool.submit(lambda: asyncio.run(_async_extract())).result(timeout=60)
+        else:
+            return asyncio.run(_async_extract())
     except Exception as e:
+        # Fallback to local HTTP text extraction via scrape()
+        h = scrape(url)
+        if h.get("ok"):
+            return {"ok": True, "data": {"text": h.get("markdown", "")}, "error": None}
         return {"ok": False, "data": None, "error": f"{type(e).__name__}: {str(e)[:250]}"}
-    finally:
-        if client is not None:
-            try:
-                client.close()
-            except Exception:
-                pass                          # a leaked session expires on its own
 
 
 # ----------------------------------------------------------------------- local tools
@@ -302,22 +422,77 @@ def has_local(binary):
         os.path.expanduser(f"~/.local/bin/{binary}"))
 
 
+def local_search(query, limit=10):
+    """Zero-credential HTTP web search fallback (Bing HTML with base64 link decoding)."""
+    import urllib.request, urllib.parse, re, html as html_lib, base64, ssl
+    try:
+        url = "https://www.bing.com/search?q=" + urllib.parse.quote(query)
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            }
+        )
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        with urllib.request.urlopen(req, timeout=12, context=ctx) as resp:
+            html = resp.read().decode("utf-8", errors="ignore")
+
+        results = []
+        matches = re.findall(r'u=a1([A-Za-z0-9+/=_-]+)', html)
+        seen_urls = set()
+        for m in matches:
+            raw_b64 = m.replace("-", "+").replace("_", "/")
+            rem = len(raw_b64) % 4
+            if rem:
+                raw_b64 += "=" * (4 - rem)
+            try:
+                target_url = base64.b64decode(raw_b64).decode("utf-8", errors="ignore")
+                if not target_url.startswith("http"):
+                    continue
+                d_host = target_url.split("/")[2].lower() if "/" in target_url else ""
+                if any(x in d_host for x in ("bing.com", "microsoft.com", "google.com", "youtube.com", "facebook.com", "twitter.com")):
+                    continue
+                if target_url in seen_urls:
+                    continue
+                seen_urls.add(target_url)
+
+                title = d_host.replace("www.", "").title()
+                results.append({
+                    "title": title,
+                    "url": target_url,
+                    "description": f"SearchResult: {query}",
+                    "source": "local_search"
+                })
+                if len(results) >= limit:
+                    break
+            except Exception:
+                continue
+        return results
+    except Exception:
+        return []
+
+
 def agent_reach(query, limit=10):
     """Semantic search via agent-reach. Finds by meaning where keywords miss."""
     binary = shutil.which("agent-reach") or os.path.expanduser("~/.local/bin/agent-reach")
-    if not os.path.exists(binary):
-        return []
-    try:
-        r = subprocess.run([binary, "search", query, "--limit", str(limit), "--json"],
-                           capture_output=True, text=True, timeout=180)
-        data = json.loads(r.stdout)
-        rows = data if isinstance(data, list) else data.get("results", [])
-        return [{"title": x.get("title", ""), "url": x.get("url", ""),
-                 "description": x.get("text", x.get("snippet", ""))[:400],
-                 "source": "agent_reach"}
-                for x in rows if isinstance(x, dict) and x.get("url")]
-    except Exception:
-        return []
+    if os.path.exists(binary):
+        try:
+            r = subprocess.run([binary, "search", query, "--limit", str(limit), "--json"],
+                               capture_output=True, text=True, timeout=180)
+            data = json.loads(r.stdout)
+            rows = data if isinstance(data, list) else data.get("results", [])
+            items = [{"title": x.get("title", ""), "url": x.get("url", ""),
+                     "description": x.get("text", x.get("snippet", ""))[:400],
+                     "source": "agent_reach"}
+                    for x in rows if isinstance(x, dict) and x.get("url")]
+            if items:
+                return items
+        except Exception:
+            pass
+    return local_search(query, limit=limit)
+
 
 
 # ---------------------------------------------------------------------- capabilities

@@ -28,7 +28,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BRIEF = os.path.join(ROOT, "config", "brief.json")
-IN = os.path.join(ROOT, "data", "companies.json")
+IN = os.path.join(ROOT, "data", "deduped.json") if os.path.exists(os.path.join(ROOT, "data", "deduped.json")) else os.path.join(ROOT, "data", "companies.json")
 OUT = os.path.join(ROOT, "data", "qualified.json")
 
 
@@ -39,7 +39,29 @@ def blob(c):
 
 def score(company, icp):
     text = blob(company)
+    domain = (company.get("domain") or "").lower()
     pts, why = 0, []
+
+    # Hard exclusion check: government, edu domains or explicit ICP exclusions
+    excl = [e.lower() for e in icp.get("exclusions", []) if e.strip()]
+    if any(e in text for e in excl):
+        return 0, ["excluded by rule"]
+
+    if any(domain.endswith(ext) or f".{ext}." in domain for ext in ("gov", "gov.in", "gov.uk", "gov.au", "edu", "ac.uk")):
+        return 0, ["excluded: government or education domain"]
+
+    REF_DOMAINS = (
+        "merriam-webster.com", "dictionary.com", "cambridge.org", "vocabulary.com",
+        "usdictionary.com", "grammarist.com", "wikipedia.org", "wiktionary.org",
+        "ambitionbox.com", "f6s.com", "topcompanieslist.com", "companydetails.in",
+        "vcsdata.com", "pune.ws", "unesco.org", "unicef.org", "worldhistory.org",
+        "calculator", "calculatorsoup", "symbolab", "mathway", "w3calc", "okcalc"
+    )
+    if any(d in domain or d in text for d in REF_DOMAINS):
+        return 0, ["excluded: reference or directory site"]
+    NSFW = ("sex", "porn", "jav", "adult", "nsfw", "cliphot", "phimsex")
+    if any(n in domain or n in text for n in NSFW):
+        return 0, ["excluded: nsfw or adult domain"]
 
     if company.get("signals"):
         pts += 30
@@ -86,7 +108,7 @@ def main():
     a = ap.parse_args()
 
     if not os.path.exists(a.inp):
-        sys.exit("No data/companies.json. Run:  python3 src/source.py")
+        sys.exit("No data/companies.json. Run:  python3 src/run.py --only discover")
     if not os.path.exists(BRIEF):
         sys.exit("No config/brief.json. Run:  python3 src/intake.py")
 
@@ -113,8 +135,10 @@ def main():
     print(f"\n{len(companies)} in, {len(passed)} qualified "
           f"(min score {a.min_score}, {dropped} excluded by rule)\n")
     for c in passed[:20]:
-        print(f"  {c['score']:3}  {c['name'][:34]:36} {c['domain'][:30]:32} "
-              f"{', '.join(c['score_reasons'][:3])}")
+        company_name = c.get("company") or c.get("name") or "unnamed"
+        domain_str = c.get("domain") or ""
+        reasons = ", ".join(c.get("score_reasons", [])[:3])
+        print(f"  {c['score']:3}  {company_name[:34]:36} {domain_str[:30]:32} {reasons}")
     if not passed:
         print("  Nothing passed. Either the brief is too narrow or sourcing found the")
         print("  wrong market. Check data/companies.json before lowering --min-score.")

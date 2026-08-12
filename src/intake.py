@@ -76,7 +76,7 @@ def normalise(url):
     url = (url or "").strip()
     if not url:
         return ""
-    if not url.startswith(("http://", "https://")):
+    if not url.lower().startswith(("http://", "https://")):
         url = "https://" + url
     return url.rstrip("/")
 
@@ -84,45 +84,108 @@ def normalise(url):
 def from_site(url, brief):
     """Derive everything the client's own website will tell us."""
     url = normalise(url)
-    print(f"  reading {url} ...")
-    data = C.extract(
-        [url, f"{url}/about", f"{url}/services", f"{url}/work", f"{url}/clients"],
-        SITE_SCHEMA,
-        "Read this company's website and describe what they sell, who they serve, "
-        "and which clients they name. Use only what the pages actually say.")
-
-    if not data:
-        print("  site extraction returned nothing, falling back to a plain scrape")
-        page = C.scrape(url)
-        if page["ok"]:
-            brief["meta"]["source"].append(f"scrape:{url}")
-            text = page["text"][:4000]
-            brief["client"]["offer"] = brief["client"]["offer"] or text[:300].strip()
-            return brief
-        print("  could not read the site at all")
-        return brief
-
-    if isinstance(data, dict) and isinstance(data.get("data"), dict):
-        data = data["data"]
-    if not isinstance(data, dict):
-        return brief
-
-    c = brief["client"]
-    c["name"] = c["name"] or (data.get("company_name") or "").strip()
-    c["offer"] = c["offer"] or (data.get("what_they_do") or "").strip()
-    c["value_claim"] = c["value_claim"] or (data.get("value_claim") or "").strip()
-    if data.get("client_names"):
-        c["proof"] = sorted(set(c["proof"]) | set(data["client_names"]))
-    if data.get("industries"):
-        brief["icp"]["target_industries"] = sorted(
-            set(brief["icp"]["target_industries"]) | set(data["industries"]))
-    if data.get("who_they_serve") and not brief["icp"]["target_industries"]:
-        brief["meta"].setdefault("who_they_serve", data["who_they_serve"])
-
     brief["client"]["site"] = url
-    brief["meta"]["source"].append(f"site:{url}")
-    print(f"  got: {c['name'] or 'unnamed'} | {(c['offer'] or '')[:70]}")
+    read_meta = {"ok": False, "source": None, "error": None}
+    prompt = (
+        "Read this company's website and describe what they sell, who they serve, "
+        "and which clients they name. Use only what the pages actually say."
+    )
+
+    print(f"  reading {url} ...")
+    data = None
+    if C.is_linked("firecrawl"):
+        data = C.extract([url], SITE_SCHEMA, prompt)
+
+    if data:
+        if isinstance(data, dict) and isinstance(data.get("data"), dict):
+            data = data["data"]
+        if isinstance(data, dict):
+            c = brief["client"]
+            c["name"] = c["name"] or (data.get("company_name") or "").strip()
+            c["offer"] = c["offer"] or (data.get("what_they_do") or "").strip()
+            c["value_claim"] = c["value_claim"] or (data.get("value_claim") or "").strip()
+            if data.get("client_names"):
+                c["proof"] = sorted(set(c["proof"]) | set(data["client_names"]))
+            if data.get("industries"):
+                brief["icp"]["target_industries"] = sorted(
+                    set(brief["icp"]["target_industries"]) | set(data["industries"]))
+            if data.get("who_they_serve") and not brief["icp"]["target_industries"]:
+                brief["meta"].setdefault("who_they_serve", data["who_they_serve"])
+            if c["name"] or c["offer"]:
+                brief["meta"]["source"].append(f"site:{url}")
+                read_meta = {"ok": True, "source": "firecrawl_json", "error": None}
+                print(f"  got: {c['name'] or 'unnamed'} | {(c['offer'] or '')[:70]}")
+                brief["meta"]["last_site_read"] = read_meta
+                return brief
+
+    print("  structured extraction empty, trying plain page scrape")
+    page = C.scrape(url)
+    if page["ok"]:
+        src = page.get("source", "scrape")
+        brief["meta"]["source"].append(f"{src}:{url}")
+        text = page["text"][:8000]
+        name, offer = _text_from_scrape(text)
+        brief["client"]["name"] = brief["client"]["name"] or name
+        brief["client"]["offer"] = brief["client"]["offer"] or offer
+        if brief["client"]["offer"]:
+            read_meta = {"ok": True, "source": src, "error": None}
+            print(f"  got (scrape): {brief['client']['name'] or 'unnamed'} | {brief['client']['offer'][:70]}")
+            brief["meta"]["last_site_read"] = read_meta
+            return brief
+        read_meta = {
+            "ok": False,
+            "source": src,
+            "error": "Page loaded but no usable text was found.",
+        }
+    else:
+        read_meta = {
+            "ok": False,
+            "source": None,
+            "error": page.get("error") or "Could not read the website.",
+        }
+        print(f"  could not read the site: {read_meta['error']}")
+
+    brief["meta"]["last_site_read"] = read_meta
     return brief
+
+
+def _text_from_scrape(text):
+    """Pull a company name and offer blurb from scraped page text."""
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    name = ""
+    offer = ""
+    skip = ("cookie", "privacy", "skip to", "sign in", "log in", "javascript")
+
+    for line in lines:
+        if line.startswith("# "):
+            name = name or line[2:].strip()
+        elif line.startswith("## ") and not name:
+            name = line[3:].strip()
+
+    for line in lines:
+        clean = line.lstrip("#").strip()
+        low = clean.lower()
+        if len(clean) > 40 and not any(low.startswith(s) for s in skip):
+            offer = clean[:300]
+            break
+
+    if not offer:
+        for line in lines:
+            clean = line.lstrip("#").strip()
+            if len(clean) > 20:
+                offer = clean[:300]
+                break
+
+    if not name and offer:
+        # Plain HTML pages often repeat the title; take the first distinct phrase.
+        parts = re.split(r"[.|\n]", offer)
+        candidate = (parts[0] if parts else offer).strip()
+        words = candidate.split()
+        if len(words) >= 2 and words[0] == words[1]:
+            candidate = " ".join(words[1:])
+        name = candidate[:80]
+
+    return name, offer
 
 
 def from_text(text, brief):
@@ -300,8 +363,19 @@ def main():
     ap.add_argument("--text", help="freeform description of the client and who they want")
     ap.add_argument("--file", help="path to an ICP doc, brief or notes")
     ap.add_argument("--yes", action="store_true", help="never prompt; record gaps instead")
+    ap.add_argument("--answers", help="JSON object of field -> answer, or a path to one")
+    ap.add_argument("--questions", action="store_true",
+                    help="print the questions to ask, as JSON, and exit")
+    ap.add_argument("--reintake", action="store_true",
+                    help="overwrite existing values instead of only filling gaps")
     ap.add_argument("--out", default=BRIEF)
     a = ap.parse_args()
+
+    # Let an agent read the questions from the code rather than hardcoding a copy
+    # that drifts. Answer them and feed the result back through --answers.
+    if a.questions:
+        print(json.dumps(questions_for_ui(), indent=2))
+        return
 
     brief = blank_brief()
     if os.path.exists(a.out):
@@ -327,8 +401,31 @@ def main():
         else:
             brief = from_site(a.site, brief)
 
-    if not any([a.site, a.text, a.file]) and a.yes:
-        sys.exit("Nothing to work from. Pass --site, --text or --file, or drop --yes.")
+    # The structured path, and the one an agent uses. `from_text` is deliberately
+    # lossy — it will not infer an ICP from prose, because a wrong guess here
+    # poisons every downstream search. So an agent asks the human the questions
+    # itself and passes the answers in as data, rather than hoping a paragraph
+    # parses. Same function the web wizard posts to.
+    if a.answers:
+        raw = a.answers
+        if not raw.lstrip().startswith("{"):
+            raw = open(os.path.expanduser(raw)).read()
+        try:
+            supplied = json.loads(raw)
+        except json.JSONDecodeError as e:
+            sys.exit(f"--answers is not valid JSON: {e}")
+        if not isinstance(supplied, dict):
+            sys.exit("--answers must be a JSON object mapping field -> value.")
+        unknown = set(supplied) - {f for f, _p, _r in QUESTIONS}
+        if unknown:
+            sys.exit(f"--answers has unknown field(s): {', '.join(sorted(unknown))}\n"
+                     f"valid: {', '.join(f for f, _p, _r in QUESTIONS)}")
+        brief = fill_from_answers(brief, supplied, overwrite=a.reintake)
+        print(f"  applied {len(supplied)} answer(s)")
+
+    if not any([a.site, a.text, a.file, a.answers]) and a.yes:
+        sys.exit("Nothing to work from. Pass --site, --text, --file or --answers, "
+                 "or drop --yes.")
 
     brief = ask(brief, auto=a.yes)
 
@@ -336,7 +433,7 @@ def main():
     json.dump(brief, open(a.out, "w"), indent=2)
     report(brief)
     print(f"wrote {os.path.relpath(a.out, ROOT)}")
-    print("next:  python3 src/source.py")
+    print("next:  python3 src/run.py --plan")
 
 
 if __name__ == "__main__":

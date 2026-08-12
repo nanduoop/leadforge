@@ -3,10 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>LeadForge</title>
+  <title>LeadForge — Interactive Lead Intelligence</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
@@ -21,7 +21,7 @@
       </div>
       <nav id="step-nav" class="step-nav"></nav>
       <div class="sidebar-foot">
-        <p>Open source · Composio connectors · Your API keys</p>
+        <p>Open source · Composio connectors · Evidence on every claim</p>
       </div>
     </aside>
 
@@ -36,6 +36,14 @@
           <button type="button" class="btn primary" id="btn-next">Continue</button>
         </div>
       </header>
+
+      <aside id="coach-panel" class="coach-panel" aria-live="polite">
+        <div class="coach-avatar">LF</div>
+        <div class="coach-body">
+          <p class="coach-label">Guide</p>
+          <p id="coach-message" class="coach-message">Welcome — I'll walk you through each step.</p>
+        </div>
+      </aside>
 
       <section class="panel" id="panel-welcome">
         <div class="hero">
@@ -52,17 +60,19 @@
             <p>The stage that finds a lead never rules on whether it is real. Verification reads the record fresh.</p>
           </article>
           <article class="card">
-            <h4>Bring your own tools</h4>
-            <p>Firecrawl and Composio get you started free. Upgrade Browserbase, Apollo, or Clay when you need scale.</p>
+            <h4>Runs on free tiers</h4>
+            <p>Firecrawl, Browserbase and Agent Reach all start free. Connect your own keys and upgrade only when you need scale.</p>
           </article>
         </div>
       </section>
 
       <section class="panel hidden" id="panel-setup">
         <p class="lead">Connect the services you need. Only Firecrawl is required to run discovery.</p>
-        <div id="setup-checks" class="check-list"></div>
-        <h3 class="section-title">Integrations</h3>
         <div id="integrations" class="integration-grid"></div>
+        <details class="advanced" id="setup-details">
+          <summary id="setup-summary">System check</summary>
+          <div id="setup-checks" class="check-list"></div>
+        </details>
       </section>
 
       <section class="panel hidden" id="panel-business">
@@ -110,13 +120,36 @@
       </section>
 
       <section class="panel hidden" id="panel-run">
-        <p class="lead" id="run-lead">Starting pipeline…</p>
-        <div class="progress-track">
+        <div class="run-header">
+          <div>
+            <p class="lead" id="run-lead">Starting pipeline…</p>
+            <div class="overall-progress-stats">
+              <span id="overall-percent">0%</span> complete
+              <span class="elapsed" id="run-elapsed"></span>
+            </div>
+            <p class="run-subline" id="run-subline"></p>
+          </div>
+          <div class="run-controls">
+            <button type="button" class="btn secondary" id="btn-reset-pipeline">Reset pipeline</button>
+          </div>
+        </div>
+
+        <div class="progress-track" aria-label="Overall pipeline progress">
           <div class="progress-bar" id="progress-bar"></div>
         </div>
-        <div id="stage-list" class="stage-list"></div>
+        <div class="progress-meta">
+          <span id="progress-stages-label">0 of 8 stages</span>
+          <span id="progress-eta"></span>
+        </div>
+
+        <h3 class="section-title">What's happening now</h3>
+        <div id="stage-list" class="stage-card-grid"></div>
+
         <div class="event-log">
-          <h4>Activity</h4>
+          <div class="event-log-head">
+            <h4>Activity log</h4>
+            <button type="button" class="btn micro" id="btn-clear-log">Clear view</button>
+          </div>
           <ul id="event-log"></ul>
         </div>
       </section>

@@ -270,3 +270,31 @@ def save(leads, path):
 
 def load(path):
     return [Lead.from_dict(d) for d in json.load(open(path))]
+
+
+def is_rich_lead(lead):
+    """
+    Check if a Lead meets the high quality bar for a rich, actionable lead.
+
+    A rich lead must have:
+    - Company name and valid domain
+    - Contact with a name and verified/non-generic email or target title
+    - At least 1 piece of evidence or buying signal
+    """
+    if not (lead.company and lead.domain):
+        return False
+    c = lead.contact or {}
+    name = (c.get("name") or "").strip()
+    email = (c.get("email") or "").strip().lower()
+    title = (c.get("title") or "").strip()
+
+    if not name:
+        return False
+    if email and any(email.startswith(p + "@") for p in ("info", "careers", "contact", "jobs", "support")):
+        return False
+    if not (email or title):
+        return False
+    if not (lead.evidence or lead.signals):
+        return False
+    return True
+

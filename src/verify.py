@@ -44,7 +44,10 @@ EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
 # Addresses that are structurally valid and commercially useless.
 ROLE_PREFIX = {"info", "hello", "contact", "support", "admin", "sales", "help",
                "team", "office", "enquiries", "inquiries", "hi", "mail", "no-reply",
-               "noreply", "donotreply", "webmaster", "postmaster", "abuse"}
+               "noreply", "donotreply", "webmaster", "postmaster", "abuse",
+               "careers", "career", "jobs", "job", "recruiting", "recruitment",
+               "hiring", "hr", "billing", "accounts", "legal", "privacy",
+               "security", "press", "media", "marketing", "general", "service"}
 
 # Placeholders that real providers genuinely return. Every one of these has been
 # seen in live output at some point, which is why the list is explicit.
@@ -271,7 +274,7 @@ def verify_one(lead, siblings_by_domain, use_paid=True):
     return lead
 
 
-def verify_leads(leads, use_paid=True, workers=8):
+def verify_leads(leads, use_paid=True, workers=8, on_progress=None):
     """
     Schema-native entry point, used by the orchestrator.
 
@@ -314,13 +317,20 @@ def verify_leads(leads, use_paid=True, workers=8):
         return lead
 
     out = []
+    total = len(leads)
+    passed = 0
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futs = [pool.submit(one, l) for l in leads]
-        for fut in as_completed(futs):
+        for i, fut in enumerate(as_completed(futs), 1):
             try:
-                out.append(fut.result())
+                lead = fut.result()
+                out.append(lead)
+                if lead.verification.get("confidence", 0) >= 70:
+                    passed += 1
             except Exception:
                 continue
+            if on_progress:
+                on_progress(i, total, passed)
     return out
 
 

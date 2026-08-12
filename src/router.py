@@ -32,7 +32,7 @@ BROWSER, FIRECRAWL, AGENT_REACH, CLAY, COMPOSIO = (
 CHAINS = {
     "web_search":       [FIRECRAWL, AGENT_REACH],
     "page_extract":     [FIRECRAWL, BROWSER],
-    "structured_pages": [FIRECRAWL, BROWSER],
+    "structured_pages": [BROWSER, FIRECRAWL],
     "interactive":      [BROWSER],
     "social":           [AGENT_REACH],
     "b2b_records":      [CLAY],
