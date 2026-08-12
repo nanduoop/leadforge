@@ -6,8 +6,19 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from schema import Lead, Evidence
 from score import score_lead
 
-ROOT = os.path.join(os.path.dirname(__file__), "..")
-ICP = json.load(open(os.path.join(ROOT, "config", "brief.json")))["icp"]
+# Fixed fixture, not the operator's live brief. config/brief.json is gitignored,
+# so reading it here made the whole suite fail to collect in a fresh clone —
+# and made these expected scores drift the moment anyone re-ran intake.
+ICP = {
+    "target_industries": ["media", "consumer brands", "SaaS", "Content Creation"],
+    "target_titles": ["Head of Content", "Creative Director", "VP Marketing",
+                      "Head of Production"],
+    "target_markets": ["United States", "United Kingdom"],
+    "company_size": "51-200",
+    "buying_signals": ["hiring video editors", "hiring motion designers",
+                       "raised funding"],
+    "exclusions": ["recruitment agency", "staffing agency", "freelance marketplace"],
+}
 RECENT = datetime.now(timezone.utc).isoformat()
 
 
