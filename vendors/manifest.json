@@ -1,0 +1,16 @@
+{
+  "agent-reach": {
+    "name": "agent-reach",
+    "repo": "https://github.com/Panniantong/Agent-Reach",
+    "role": "social",
+    "install": "pip install agent-reach || npm install -g agent-reach",
+    "platforms": ["instagram", "facebook", "tiktok", "twitter", "reddit", "linkedin", "youtube"]
+  },
+  "scrapling": {
+    "name": "scrapling",
+    "repo": "https://github.com/D4Vinci/Scrapling",
+    "role": "bot_bypass",
+    "pypi": "scrapling",
+    "install": "pip install scrapling && scrapling install"
+  }
+}

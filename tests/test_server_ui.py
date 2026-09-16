@@ -143,3 +143,10 @@ def test_api_leads():
     assert "stage" in data
     assert "count" in data
     assert "leads" in data
+
+
+def test_api_leads_dashboard_missing():
+    response = client.get("/api/leads/dashboard")
+    assert response.status_code in (200, 404)
+    if response.status_code == 200:
+        assert "text/html" in response.headers.get("content-type", "")

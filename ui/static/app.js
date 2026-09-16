@@ -360,6 +360,7 @@ async function startPipeline() {
       limit: Number($("#input-limit").value) || 60,
       max_companies: Number($("#input-max-companies").value) || 60,
       min_confidence: Number($("#input-min-confidence").value) || 70,
+      confirmed: true,
     }),
   });
   pollPipeline();

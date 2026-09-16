@@ -79,6 +79,19 @@ def to_csv(leads, path):
     return path
 
 
+def write_local(leads, dest_dir=None, title="Verified leads"):
+    """CSV plus the HTML dashboard. Always written. No automation instructions."""
+    dest_dir = dest_dir or os.path.join(ROOT, "data")
+    os.makedirs(dest_dir, exist_ok=True)
+    stamp = datetime.now().strftime("%Y-%m-%d-%H%M")
+    csv_path = os.path.join(dest_dir, f"leads-{stamp}.csv")
+    dash_path = os.path.join(dest_dir, "dashboard.html")
+    to_csv(leads, csv_path)
+    from dashboard import to_html
+    to_html(leads, dash_path, title=title)
+    return csv_path, dash_path
+
+
 def to_sheets(leads, title):
     """
     Create a spreadsheet and write every row in one call.
@@ -178,11 +191,9 @@ def main():
 
     print(f"\nexporting {len(leads)} leads")
 
-    # A CSV is always written, even when the primary target is something else. The
-    # run is expensive and the local copy is the thing that survives an API failure.
-    csv_path = os.path.join(ROOT, "data", f"leads-{datetime.now():%Y-%m-%d-%H%M}.csv")
-    to_csv(leads, csv_path)
-    print(f"  csv     {os.path.relpath(csv_path, ROOT)}")
+    csv_path, dash_path = write_local(leads, title=title)
+    print(f"  csv        {os.path.relpath(csv_path, ROOT)}")
+    print(f"  dashboard  {os.path.relpath(dash_path, ROOT)}")
 
     if target == "sheets":
         url, err = to_sheets(leads, title)

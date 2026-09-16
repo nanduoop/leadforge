@@ -304,9 +304,12 @@ def stage_export(job, args):
         return {"exported": 0, "note": "nothing met the priority threshold"}
 
     stamp = datetime.now().strftime("%Y-%m-%d %H%M")
-    csv_path = os.path.join(DATA, f"leads-{datetime.now():%Y-%m-%d-%H%M}.csv")
-    output.to_csv(leads, csv_path)
-    result = {"exported": len(leads), "csv": os.path.relpath(csv_path, ROOT)}
+    csv_path, dash_path = output.write_local(leads, dest_dir=DATA, title=args.title or f"LeadForge {stamp}")
+    result = {
+        "exported": len(leads),
+        "csv": os.path.relpath(csv_path, ROOT),
+        "dashboard": os.path.relpath(dash_path, ROOT),
+    }
 
     if args.to in ("auto", "sheets") and C.is_linked("googlesheets"):
         url, err = output.to_sheets(leads, args.title or f"LeadForge {stamp}")

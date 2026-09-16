@@ -1,18 +1,44 @@
 # LeadForge
 
-Universal lead generation. You describe your business in whatever form you already
-have it, and the system works out who to target, finds them across several
-independent search paths, proves each lead is real, and delivers a scored list with
-the evidence attached.
+Universal lead generation. You describe your business. The system finds who to
+target, proves each lead is real, and delivers a scored dashboard with the
+evidence attached.
 
-It is not tied to one industry. The same engine that finds companies hiring video
-editors will find luxury hotels planning renovations, because the search strategy is
-derived from your brief rather than hardcoded.
+It is not tied to one industry. Plug it into Claude, ChatGPT, Codex, OpenCode,
+or any other agent. The brief drives the search.
 
 ```bash
 ./setup.sh --install
-./start-ui.sh                  # guided web wizard (recommended)
+./start-ui.sh                  # guided wizard — asks, then confirms, then runs
 ./run.sh --site yourcompany.com
+```
+
+Public repo: https://github.com/nanduoop/leadforge
+
+## For ChatGPT and chat-only agents
+
+Skip browser automation. Do not invent Playwright, OpenCLI, or "click this"
+steps. Ask the eight ICP questions, wait for confirmation, run the pipeline,
+and hand over `data/dashboard.html`. That file is the product.
+
+See `docs/for-agents.md`.
+
+## Connections — asked, never assumed
+
+The wizard and `src/preflight.py` list every integration and the exact command
+to link it. Only Firecrawl is required.
+
+This repo pulls two vendors (pinned in `vendors/manifest.json`):
+
+| Vendor | Repo | Role |
+|---|---|---|
+| Agent Reach | https://github.com/Panniantong/Agent-Reach | Instagram, Facebook, TikTok, LinkedIn social discovery |
+| Scrapling | https://github.com/D4Vinci/Scrapling | StealthyFetcher bot-bypass page fetch |
+
+```bash
+pip install scrapling && scrapling install
+# Agent Reach: pip install agent-reach  or  npm install -g agent-reach
+composio link firecrawl
 ```
 
 ## Web UI
@@ -26,14 +52,16 @@ LeadForge ships with a local step-by-step wizard for setup, intake, pipeline pro
 
 The wizard walks through:
 
-1. **Connections** — Composio status for Firecrawl, Google Sheets, NeverBounce, HubSpot
-2. **Your business** — reads your website and pre-fills the brief
-3. **Target audience** — ICP questions (industries, titles, markets, buying signals)
-4. **Review** — discovery preview with estimated Firecrawl credits before spending
+1. **Connections** — Firecrawl, Sheets, NeverBounce, HubSpot, Agent Reach, Scrapling
+2. **Your business** — reads your website and pre-fills a draft brief
+3. **Target audience** — ICP questions. Empty until you answer. Nothing is assumed.
+4. **Review** — read-back of the brief. You confirm before any credits are spent.
 5. **Pipeline** — live progress across all eight stages
-6. **Results** — scored leads table and CSV download
+6. **Results** — scored leads table, CSV, and `data/dashboard.html`
 
-Firecrawl is required. Google Sheets is optional (CSV is always written locally). Browserbase and Agent Reach unlock additional discovery paths when configured.
+Firecrawl is required. Google Sheets is optional (CSV and the HTML dashboard are
+always written locally). Scrapling and Agent Reach unlock bot-walled pages and
+social discovery when installed.
 
 ## What makes this different from a scraper
 
@@ -91,7 +119,8 @@ to pretend it is an OAuth app makes the system worse, not simpler.
 | App auth | **Composio** | One link per app: Sheets, CRM, verification APIs. No key touches disk |
 | Web extraction | **Firecrawl** | High-throughput search, scrape and structured extract |
 | Interactive browser | **Browserbase** | JS-heavy pages, real logins, anything needing a click |
-| Specialist access | **Agent Reach** | Semantic and social discovery |
+| Bot-bypass fetch | **Scrapling** | StealthyFetcher. Bot-walled pages Firecrawl cannot read |
+| Specialist access | **Agent Reach** | Instagram, Facebook, TikTok, LinkedIn, Reddit |
 | B2B records | **Clay** | Structured firmographics, when connected |
 
 Tool choice is **deterministic**. `router.py` maps a task's properties to a source, so

@@ -10,6 +10,7 @@ reproducible or debuggable.
 So routing is a pure function of the task's properties:
 
     interaction needed        -> BROWSER      (Stagehand on Browserbase)
+    bot-walled pages          -> SCRAPLING    (StealthyFetcher)
     bulk web extraction       -> FIRECRAWL
     social / specialist plat. -> AGENT_REACH
     structured B2B records    -> CLAY
@@ -25,14 +26,14 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import connectors as C
 from schema import SourceResult, Evidence
 
-BROWSER, FIRECRAWL, AGENT_REACH, CLAY, COMPOSIO = (
-    "browser", "firecrawl", "agent_reach", "clay", "composio")
+BROWSER, FIRECRAWL, AGENT_REACH, CLAY, COMPOSIO, SCRAPLING = (
+    "browser", "firecrawl", "agent_reach", "clay", "composio", "scrapling")
 
 # Ordered preference per capability. First available wins; the rest are fallbacks.
 CHAINS = {
     "web_search":       [FIRECRAWL, AGENT_REACH],
-    "page_extract":     [FIRECRAWL, BROWSER],
-    "structured_pages": [BROWSER, FIRECRAWL],
+    "page_extract":     [SCRAPLING, FIRECRAWL, BROWSER],
+    "structured_pages": [BROWSER, SCRAPLING, FIRECRAWL],
     "interactive":      [BROWSER],
     "social":           [AGENT_REACH],
     "b2b_records":      [CLAY],
@@ -65,6 +66,7 @@ def availability():
         AGENT_REACH: caps["agent_reach"],
         CLAY:        caps["_connections"].get("clay") == ["ACTIVE"],
         COMPOSIO:    caps["composio"],
+        SCRAPLING:   caps.get("scrapling", False),
     }
 
 
@@ -113,9 +115,25 @@ def _firecrawl_search(payload):
 
 
 def _agent_reach_search(payload):
-    items = C.agent_reach(payload["query"], payload.get("limit", 10))
+    platform = payload.get("platform")
+    if platform:
+        items = C.agent_reach_social(platform, payload["query"], payload.get("limit", 10))
+    else:
+        items = C.agent_reach(payload["query"], payload.get("limit", 10))
     return SourceResult(AGENT_REACH,
                         "success" if items else "not_found", items=items)
+
+
+def _scrapling_extract(payload):
+    url = payload.get("url") or (payload.get("urls") or [None])[0]
+    if not url:
+        return SourceResult(SCRAPLING, "error", error="no url")
+    r = C.scrapling_fetch(url)
+    if not r.get("ok"):
+        return SourceResult(SCRAPLING, "error", error=r.get("error") or "fetch failed")
+    return SourceResult(SCRAPLING, "success", items=[{"url": r.get("url") or url,
+                                                      "title": "",
+                                                      "description": (r.get("text") or "")[:400]}])
 
 
 def _firecrawl_extract(payload):
@@ -146,6 +164,8 @@ HANDLERS = {
     (AGENT_REACH, "social"):         _agent_reach_search,
     (FIRECRAWL, "page_extract"):     _firecrawl_extract,
     (FIRECRAWL, "structured_pages"): _firecrawl_extract,
+    (SCRAPLING, "page_extract"):     _scrapling_extract,
+    (SCRAPLING, "structured_pages"): _scrapling_extract,
     (BROWSER, "page_extract"):       _browser_extract,
     (BROWSER, "structured_pages"):   _browser_extract,
     (BROWSER, "interactive"):        _browser_extract,

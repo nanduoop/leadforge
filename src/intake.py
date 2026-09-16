@@ -244,6 +244,7 @@ def fill_from_answers(brief, answers, overwrite=False):
             brief["client"][field] = value
         else:
             brief["icp"][field] = value
+        brief["meta"].setdefault("answered_by", {})[field] = "user"
         if field in brief["meta"]["gaps"]:
             brief["meta"]["gaps"].remove(field)
     return brief

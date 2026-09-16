@@ -132,9 +132,18 @@ INTEGRATIONS = [
         "name": "Agent Reach",
         "required": False,
         "tier": "free",
-        "description": "Semantic and social discovery. Install: npm i -g agent-reach",
+        "description": "Social discovery (Instagram, Facebook, TikTok, LinkedIn). Install: pip install agent-reach",
         "link": None,
-        "upgrade": None,
+        "upgrade": "https://github.com/Panniantong/Agent-Reach",
+    },
+    {
+        "id": "scrapling",
+        "name": "Scrapling",
+        "required": False,
+        "tier": "free",
+        "description": "Bot-bypass page fetch via StealthyFetcher. pip install scrapling",
+        "link": None,
+        "upgrade": "https://github.com/D4Vinci/Scrapling",
     },
 ]
 
@@ -159,6 +168,7 @@ class PipelineStartRequest(BaseModel):
     resume: bool = False
     from_stage: str | None = None
     browser: bool = False
+    confirmed: bool = False
 
 
 def _integration_status():
@@ -172,6 +182,9 @@ def _integration_status():
             status = "connected" if linked else "not_configured"
         elif iid == "agent_reach":
             linked = caps.get("agent_reach", False)
+            status = "connected" if linked else "not_configured"
+        elif iid == "scrapling":
+            linked = caps.get("scrapling", False)
             status = "connected" if linked else "not_configured"
         else:
             raw = conns.get(iid, [])
@@ -317,7 +330,8 @@ def api_integrations():
 
 @app.get("/api/intake/questions")
 def api_intake_questions():
-    return {"questions": intake.questions_for_ui()}
+    import confirm
+    return {"questions": confirm.questions_for_ui()}
 
 
 @app.get("/api/intake/brief")
@@ -402,6 +416,14 @@ def api_pipeline_start(body: PipelineStartRequest):
         raise HTTPException(400, "Setup checks failed. Fix blocking issues first.")
     if not os.path.exists(ARTIFACT["intake"]):
         raise HTTPException(400, "No brief found. Complete intake first.")
+    import confirm
+    brief = intake.load_brief(str(ROOT / "config" / "brief.json"))
+    gate = confirm.plan_run(brief, confirmed=body.confirmed)
+    if not gate["allowed"]:
+        raise HTTPException(
+            400,
+            f"Cannot start: {gate['reason']}. Confirm the brief and fill gaps {gate['gaps']}.",
+        )
     threading.Thread(target=_run_pipeline, args=(body,), daemon=True).start()
     return {"started": True}
 
@@ -428,6 +450,14 @@ def api_leads_csv():
     if not csvs:
         raise HTTPException(404, "No CSV export found yet")
     return FileResponse(csvs[0], filename=csvs[0].name, media_type="text/csv")
+
+
+@app.get("/api/leads/dashboard")
+def api_leads_dashboard():
+    path = ROOT / "data" / "dashboard.html"
+    if not path.exists():
+        raise HTTPException(404, "No dashboard yet. Run the pipeline first.")
+    return FileResponse(path, filename="dashboard.html", media_type="text/html")
 
 
 class RerunStageRequest(BaseModel):

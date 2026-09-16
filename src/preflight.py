@@ -91,10 +91,18 @@ def c_browser():
 
 def c_agent_reach():
     if C.has_local("agent-reach"):
-        check("agent-reach", OK, "semantic and social discovery available")
+        check("agent-reach", OK, "social discovery (Instagram, Facebook, TikTok)")
     else:
-        check("agent-reach", WARN, "not installed, those paths will be skipped",
-              "npm install -g agent-reach")
+        check("agent-reach", WARN, "not installed, social paths will be skipped",
+              "pip install agent-reach  (repo: https://github.com/Panniantong/Agent-Reach)")
+
+
+def c_scrapling():
+    if C._scrapling_available():
+        check("scrapling", OK, "StealthyFetcher bot-bypass available")
+    else:
+        check("scrapling", WARN, "not installed, bot-walled pages will fall back",
+              "pip install scrapling && scrapling install  (repo: https://github.com/D4Vinci/Scrapling)")
 
 
 def c_brief():
@@ -153,7 +161,7 @@ def c_writable():
 def run_checks():
     """Run all preflight checks and return structured results for the UI."""
     results.clear()
-    for fn in (c_python, c_deps, c_composio, c_browser, c_agent_reach,
+    for fn in (c_python, c_deps, c_composio, c_browser, c_agent_reach, c_scrapling,
                c_brief, c_secrets, c_writable):
         try:
             fn()

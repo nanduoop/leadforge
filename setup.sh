@@ -56,7 +56,7 @@ if [[ -d .venv ]]; then
     no "python deps"
     if [[ $INSTALL -eq 1 ]]; then
       .venv/bin/pip install -q --upgrade pip
-      .venv/bin/pip install -q stagehand dnspython fastapi uvicorn pytest && ok "installed deps"
+      .venv/bin/pip install -q stagehand dnspython fastapi uvicorn pytest scrapling && ok "installed deps"
     else
       act "./setup.sh --install"
     fi
@@ -132,12 +132,24 @@ fi
 
 # ---------------------------------------------------------------- agent-reach
 echo
-echo "Agent Reach  (semantic and social discovery)"
+echo "Agent Reach  (Instagram, Facebook, TikTok, LinkedIn social discovery)"
 if command -v agent-reach >/dev/null 2>&1 || [[ -x "$HOME/.local/bin/agent-reach" ]]; then
   ok "agent-reach"
 else
   no "agent-reach not installed (optional)"
-  act "npm install -g agent-reach"
+  act "see vendors/manifest.json — https://github.com/Panniantong/Agent-Reach"
+  act "pip install agent-reach   or   npm install -g agent-reach"
+fi
+
+# ---------------------------------------------------------------- scrapling
+echo
+echo "Scrapling  (bot-bypass page fetch, StealthyFetcher)"
+if [[ -d .venv ]] && .venv/bin/python -c "from scrapling.fetchers import StealthyFetcher" 2>/dev/null; then
+  ok "scrapling"
+else
+  no "scrapling not installed (optional, recommended)"
+  act "see vendors/manifest.json — https://github.com/D4Vinci/Scrapling"
+  act "pip install scrapling && scrapling install"
 fi
 
 # ---------------------------------------------------------------- config

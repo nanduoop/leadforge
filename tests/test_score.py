@@ -48,8 +48,10 @@ def _weak_lead():
 
 def _excluded_lead():
   lead = Lead("Staffing Inc", "staffing.com")
+  # Exclusion matches against real page text (excerpt), never against our own claim.
   lead.add_evidence(Evidence(
-      "we are a staffing agency", "https://staffing.com", "company_site",
+      "Company description", "https://staffing.com", "company_site",
+      excerpt="we are a staffing agency placing contractors",
       retrieved_at=RECENT))
   return lead
 
@@ -57,16 +59,21 @@ def _excluded_lead():
 def test_strong_lead_scores_high():
   lead = _strong_lead()
   score_lead(lead, ICP)
-  assert lead.scores["priority"] == 93
+  # Fit no longer scores against self-authored claims, so priority sits below the
+  # old circular 93. A strong, multi-source lead still clears 70.
+  assert lead.scores["priority"] >= 70
+  assert lead.scores["fit"] > 0
+  assert lead.scores["intent"] > 0
 
 
 def test_weak_lead_scores_low():
   lead = _weak_lead()
   score_lead(lead, ICP)
-  assert lead.scores["priority"] == 18
+  assert lead.scores["priority"] < 40
 
 
 def test_excluded_lead_scores_zero():
   lead = _excluded_lead()
   score_lead(lead, ICP)
   assert lead.scores["priority"] == 0
+  assert lead.scores["fit"] == 0

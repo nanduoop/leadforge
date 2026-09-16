@@ -44,10 +44,26 @@ INTENT_CLAIMS = ("hiring", "raised", "funding", "expanding", "launch",
 
 
 def _text(lead):
-    parts = [lead.company, lead.domain, " ".join(lead.signals)]
-    parts += [e.claim + " " + e.excerpt for e in lead.evidence]
+    """
+    The text fit is allowed to match against: things the outside world said.
+
+    Deliberately EXCLUDES `evidence.claim`. Claims are authored by our own pipeline
+    from the search query ("Matches ICP: private school", "Company is hiring: video
+    editor"), so scoring fit against them is circular: we write the industry into the
+    claim, then reward the lead for containing the industry. Every lead scored as a
+    perfect match regardless of what it actually was.
+
+    Measured before this fix: head.com, a tennis equipment company, scored fit=87
+    against a private-school ICP and cited "industry: private school" as the reason.
+
+    Only `excerpt` (real page text), the company name, the domain and firmographics
+    are admissible. A lead with no real page text scores 0 for fit, which is the
+    honest answer for a bare URL with nothing read off it yet.
+    """
+    parts = [lead.company, lead.domain]
+    parts += [e.excerpt for e in lead.evidence]
     parts += [str(v) for v in lead.company_data.values()]
-    return " ".join(parts).lower()
+    return " ".join(p for p in parts if p).lower()
 
 
 def score_fit(lead, icp):

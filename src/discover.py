@@ -52,7 +52,7 @@ JUNK = {
 }
 
 
-def plan(brief, cap=60, paths=None):
+def plan(brief, cap=60, paths=None, allow_no_market=False):
     """Expand the ICP into concrete queries, tagged by which path produced them."""
     icp = brief["icp"]
     industries = [i for i in icp.get("target_industries", []) if i.strip()]
@@ -64,6 +64,20 @@ def plan(brief, cap=60, paths=None):
     if not industries and not titles:
         sys.exit("The brief has no industries and no titles.\n"
                  "Fix config/brief.json or rerun: python3 src/intake.py")
+
+    # A brief with no geography used to run anyway, unscoped. That is worse than
+    # failing: the queries look reasonable, cost real credits, and return the wrong
+    # market entirely. Anything sold on local authority is meaningless without a place.
+    if not [m for m in icp.get("target_markets", []) if str(m).strip()]:
+        if not allow_no_market:
+            sys.exit(
+                "\nSTOPPED: the brief has no target_markets.\n\n"
+                "Discovery would run unscoped and return the wrong market at full cost.\n"
+                "Set target_markets in config/brief.json, for example:\n"
+                '    "target_markets": ["Dallas Fort Worth", "Texas"]\n\n'
+                "If a deliberately global search is what you want:\n"
+                "    python3 src/discover.py --allow-no-market\n")
+        print("  WARNING: no target_markets. Running unscoped at your request.\n")
 
     # The roles a prospect hires when they need what the client sells. These come from
     # the buying signals, NOT from target_titles. Those are two different people: a
@@ -88,11 +102,25 @@ def plan(brief, cap=60, paths=None):
 
     if "hiring" in want and hire_roles:
         b = []
-        for r in hire_roles[:4]:
+        for r in hire_roles[:3]:
             for m in markets[:2]:
                 where = f" {m}" if m else ""
-                for board in ATS[:3]:
-                    b.append((f'"{r}"{where} site:{board}', f"Company is hiring: {r}"))
+                # The industry MUST stay in the query. Whether an open role is a buying
+                # signal depends entirely on who posted it. "Hiring a video editor" is a
+                # signal at any company, so an industry-free query worked for that ICP.
+                # "Hiring a marketing coordinator" is a signal only at, say, a private
+                # school; unscoped it returns every company on earth with a marketing
+                # opening. Dropping the industry here silently changed which market was
+                # being searched.
+                for ind in (industries[:3] or [""]):
+                    scope = f' "{ind}"' if ind else ""
+                    for board in ATS[:2]:
+                        b.append((f'"{r}"{scope}{where} site:{board}',
+                                  f"Company is hiring: {r}"))
+                    # Their own careers page outranks an ATS board as evidence.
+                    b.append((f'"{r}"{scope}{where} careers -site:indeed.com '
+                              f'-site:linkedin.com -site:glassdoor.com',
+                              f"Company is hiring: {r}"))
         buckets["hiring"] = b
 
     if "signal" in want:
@@ -240,6 +268,8 @@ def main():
     ap.add_argument("--paths", default="", help="comma separated subset of paths")
     ap.add_argument("--workers", type=int, default=10)
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--allow-no-market", action="store_true",
+                    help="run unscoped when the brief has no target_markets")
     ap.add_argument("--out", default=OUT)
     a = ap.parse_args()
 
@@ -248,7 +278,8 @@ def main():
     brief = json.load(open(BRIEF))
 
     paths = [p.strip() for p in a.paths.split(",") if p.strip()] or None
-    queries = plan(brief, cap=a.limit, paths=paths)
+    queries = plan(brief, cap=a.limit, paths=paths,
+                   allow_no_market=a.allow_no_market)
 
     counts = {}
     for p, _, _ in queries:

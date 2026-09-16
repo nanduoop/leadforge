@@ -17,6 +17,7 @@ Three backends, chosen deliberately:
               LinkedIn through Composio is ad-targeting only, with no people search.
               So anything JS-heavy or login-gated comes through here.
   local       agent-reach and browse, if present on PATH. Optional everywhere.
+  Scrapling   StealthyFetcher bot-bypass fetch. Used when Firecrawl is blocked.
 
 Nothing here raises on a missing tool. `available()` reports what is usable and the
 pipeline degrades to whatever is connected.
@@ -217,8 +218,12 @@ def search(query, limit=10):
 def scrape(url, formats=("markdown",)):
     """
     Fetch one page as text with multi-layer fallback.
-    Order: Firecrawl -> Browserbase -> Local HTTP Fetch -> Agent Reach
+    Order: Scrapling (bot-bypass) -> Firecrawl -> Browserbase -> Local HTTP -> Agent Reach
     """
+    stealth = scrapling_fetch(url)
+    if stealth.get("ok") and stealth.get("text"):
+        return stealth
+
     # 1. Firecrawl (if linked)
     if is_linked("firecrawl"):
         r = execute("FIRECRAWL_SCRAPE", {"url": url, "formats": list(formats)})
@@ -458,18 +463,103 @@ def local_search(query, limit=10):
                     continue
                 seen_urls.add(target_url)
 
-                title = d_host.replace("www.", "").title()
+                # Title and description MUST stay empty. This backend recovers URLs
+                # only; it has no access to the real page title or snippet.
+                #
+                # Do not "helpfully" fill these from the query. An earlier version set
+                # description = f"SearchResult: {query}", and because scoring matches
+                # ICP keywords against evidence excerpts, that fabricated text made
+                # every single result look like a perfect industry match. Measured: a
+                # tennis equipment company (head.com) scored fit=87 against a
+                # private-school ICP, citing "industry: private school" — a phrase that
+                # came from our own query string, never from the page.
+                #
+                # An empty excerpt scores 0 for fit, which is the correct answer for a
+                # bare URL. Enrich it later by actually fetching the page.
                 results.append({
-                    "title": title,
+                    "title": "",
                     "url": target_url,
-                    "description": f"SearchResult: {query}",
-                    "source": "local_search"
+                    "description": "",
+                    "source": "local_search",
+                    "unverified_url_only": True,
                 })
                 if len(results) >= limit:
                     break
             except Exception:
                 continue
         return results
+    except Exception:
+        return []
+
+
+SOCIAL_PLATFORMS = (
+    "instagram", "facebook", "tiktok", "twitter", "reddit", "linkedin", "youtube",
+)
+
+
+def _scrapling_available():
+    try:
+        from scrapling.fetchers import StealthyFetcher  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
+def scrapling_fetch(url):
+    """Fetch a page through Scrapling StealthyFetcher. Bypasses bot detection.
+
+    Returns {ok, text, url, source, error} — same shape as scrape().
+    """
+    if not _scrapling_available():
+        return {"ok": False, "text": "", "url": url, "source": "scrapling",
+                "error": "scrapling not installed (pip install scrapling)"}
+    try:
+        from scrapling.fetchers import StealthyFetcher
+        StealthyFetcher.adaptive = True
+        page = StealthyFetcher.fetch(url, headless=True, network_idle=True)
+        body = getattr(page, "body", None) or getattr(page, "html_content", None) or ""
+        if hasattr(body, "decode"):
+            body = body.decode("utf-8", errors="ignore")
+        text = str(body or "")
+        if len(text.strip()) < 20:
+            return {"ok": False, "text": "", "url": url, "source": "scrapling",
+                    "error": "empty page"}
+        return {"ok": True, "text": text, "url": getattr(page, "url", url) or url,
+                "source": "scrapling", "error": None}
+    except Exception as e:
+        return {"ok": False, "text": "", "url": url, "source": "scrapling",
+                "error": f"{type(e).__name__}: {str(e)[:200]}"}
+
+
+def agent_reach_social(platform, query, limit=10):
+    """Social discovery via Agent Reach. Instagram, Facebook, TikTok, etc."""
+    platform = (platform or "").lower().strip()
+    if platform not in SOCIAL_PLATFORMS:
+        return []
+    binary = shutil.which("agent-reach") or os.path.expanduser("~/.local/bin/agent-reach")
+    if not os.path.exists(binary):
+        return []
+    try:
+        r = subprocess.run(
+            [binary, platform, "search", query, "--limit", str(limit), "--json"],
+            capture_output=True, text=True, timeout=180)
+        data = json.loads(r.stdout or "[]")
+        rows = data if isinstance(data, list) else data.get("results", [])
+        items = []
+        for x in rows:
+            if not isinstance(x, dict):
+                continue
+            url = x.get("url") or x.get("link") or ""
+            if not url:
+                continue
+            items.append({
+                "title": x.get("title", ""),
+                "url": url,
+                "description": (x.get("text") or x.get("snippet") or x.get("description") or "")[:400],
+                "source": "agent_reach",
+                "platform": platform,
+            })
+        return items
     except Exception:
         return []
 
@@ -510,6 +600,7 @@ def available():
         "google_maps":  is_linked("google_maps"),
         "browserbase":  browser_available(),
         "agent_reach":  has_local("agent-reach"),
+        "scrapling":    _scrapling_available(),
         "_connections": conns,
     }
 

@@ -5,6 +5,8 @@ __pycache__/
 .env
 config/secrets.json
 config/brief.json
+config/brief.authority-war.json
+research/
 data/
 logs/
 *.csv

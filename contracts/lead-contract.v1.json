@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/nanduoop/leadforge/contracts/lead-contract.v1.json",
+  "title": "LeadForge lead interchange contract, v1",
+  "description": "The handoff between a lead engine (LeadForge) and a send engine (SendForge). LeadForge writes this file; SendForge reads it and never touches LeadForge internals. Copy this file verbatim into any repo that consumes it — it is versioned, so a breaking change means v2, not an edit.",
+  "type": "object",
+  "required": ["contract", "generated_at", "leads"],
+  "additionalProperties": false,
+  "properties": {
+    "contract": {
+      "const": "leadforge.lead/v1",
+      "description": "Consumers must reject anything they do not recognise rather than guess."
+    },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "brief_id": {
+      "type": "string",
+      "description": "Which brief produced these leads. Lets a send engine keep campaigns apart."
+    },
+    "leads": { "type": "array", "items": { "$ref": "#/$defs/lead" } }
+  },
+  "$defs": {
+    "lead": {
+      "type": "object",
+      "required": ["id", "company", "contact", "trigger", "scores", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Stable across runs for the same company+contact, so a send engine can dedupe without guessing."
+        },
+        "company": { "type": "string", "minLength": 1 },
+        "domain": { "type": "string" },
+        "location": {
+          "type": ["string", "null"],
+          "description": "Free text. Drives send-time-of-day routing, so it matters even when rough."
+        },
+        "contact": { "$ref": "#/$defs/contact" },
+        "trigger": { "$ref": "#/$defs/trigger" },
+        "scores": { "$ref": "#/$defs/scores" },
+        "signals": { "type": "array", "items": { "type": "string" } },
+        "evidence": { "type": "array", "items": { "$ref": "#/$defs/evidence" } },
+        "status": {
+          "enum": ["qualified", "partial", "unverified", "rejected"],
+          "description": "Only 'qualified' should ever be queued for send."
+        }
+      }
+    },
+    "contact": {
+      "type": "object",
+      "required": ["email"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": ["string", "null"] },
+        "first_name": {
+          "type": ["string", "null"],
+          "description": "Split here, not at send time. A send engine guessing at name splitting is how 'Hi Dr' happens."
+        },
+        "title": { "type": ["string", "null"] },
+        "email": { "type": "string" },
+        "linkedin": { "type": ["string", "null"] },
+        "email_verified": {
+          "type": "boolean",
+          "description": "False means the address is a pattern guess. A send engine may choose to hold these."
+        },
+        "email_confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 100 }
+      }
+    },
+    "trigger": {
+      "type": "object",
+      "description": "Why this lead is worth contacting now. This is the part a send engine turns into an opening line, so it must be specific enough to quote.",
+      "required": ["summary", "verified"],
+      "additionalProperties": false,
+      "properties": {
+        "role": {
+          "type": ["string", "null"],
+          "description": "The role or need observed, when the trigger is a hiring signal."
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "description": "One sentence a human could paste into an email. 'Hiring a social-first Video Editor while scaling into three new markets.'"
+        },
+        "url": { "type": ["string", "null"] },
+        "source_type": {
+          "enum": ["company_site", "company_careers", "ats_board", "press_release", "news",
+                   "linkedin", "structured_db", "job_board", "social", "search_result",
+                   "aggregator", "inferred"]
+        },
+        "observed_at": { "type": ["string", "null"], "format": "date-time" },
+        "verified": {
+          "type": "boolean",
+          "description": "True only when corroborated by an employer-controlled source. An aggregator alone is not verification."
+        }
+      }
+    },
+    "scores": {
+      "type": "object",
+      "required": ["priority"],
+      "additionalProperties": false,
+      "properties": {
+        "priority": { "type": "number", "minimum": 0, "maximum": 100 },
+        "fit": { "type": "number", "minimum": 0, "maximum": 100 },
+        "intent": { "type": "number", "minimum": 0, "maximum": 100 },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 100 }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "required": ["claim", "source_type"],
+      "additionalProperties": false,
+      "properties": {
+        "claim": { "type": "string" },
+        "url": { "type": ["string", "null"] },
+        "source_type": { "type": "string" },
+        "excerpt": { "type": ["string", "null"] },
+        "retrieved_at": { "type": ["string", "null"], "format": "date-time" },
+        "weight": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }
+      }
+    }
+  }
+}

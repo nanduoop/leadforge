@@ -3,3 +3,4 @@ dnspython>=2.0.0
 fastapi>=0.115.0
 uvicorn>=0.32.0
 pytest>=8.0.0
+scrapling>=0.4.0
